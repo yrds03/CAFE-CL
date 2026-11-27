@@ -1,19 +1,21 @@
 /**
  * ============================================================================
- * CAFE CL — Google Apps Script Backend (Code.gs) v1.1.0
+ * CAFE CL — Google Apps Script Backend (Code.gs) v1.2.0
  * ============================================================================
- * Spreadsheet ID : 1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ
- *
- * Fitur:
- * - Auto-generate 10 sheet + header bergaya & data awal (termasuk sheet Roles)
- * - Fokus Kasir POS Cafe (Pesanan, Detail_Pesanan, Meja, Menu, Keuangan, Shift, Member)
+ * Mendukung:
+ * - Dynamic Client Spreadsheet ID (pindah ke Google Sheet klien langsung dari aplikasi!)
+ * - Auto-generate 10 sheet + header bergaya & data awal otomatis
+ * - Opsi migrasi data (Menu, Meja, Roles, Staff, Member, Pengaturan) ke Sheet Klien
  * - Void pesanan otomatis mengembalikan stok menu & mengosongkan meja
  * - Upsert & delete aman dengan LockService
  * ============================================================================
  */
 
-const SPREADSHEET_ID = '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ';
+const DEFAULT_SPREADSHEET_ID = '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ';
 const TIMEZONE = 'Asia/Jakarta';
+
+// Request-scoped Spreadsheet ID agar setiap request aman menargetkan Sheet Klien yang tepat
+let REQUEST_SPREADSHEET_ID = null;
 
 const SCHEMA = {
   Roles: [
@@ -56,7 +58,39 @@ const SCHEMA = {
   ]
 };
 
-function getSS() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
+// ============================================================================
+// DYNAMIC SPREADSHEET RESOLVER
+// ============================================================================
+
+function extractSpreadsheetId(input) {
+  const s = String(input || '').trim();
+  if (!s) return '';
+  const urlMatch = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i) || s.match(/\/d\/([a-zA-Z0-9-_]+)/i);
+  if (urlMatch && urlMatch[1]) return urlMatch[1];
+  if (/^[a-zA-Z0-9-_]{20,}$/.test(s)) return s;
+  return '';
+}
+
+function getActiveSpreadsheetId() {
+  if (REQUEST_SPREADSHEET_ID) return REQUEST_SPREADSHEET_ID;
+  try {
+    const saved = PropertiesService.getScriptProperties().getProperty('ACTIVE_SPREADSHEET_ID');
+    if (saved && saved.trim()) return saved.trim();
+  } catch (e) {}
+  return DEFAULT_SPREADSHEET_ID;
+}
+
+function getSS() {
+  const id = getActiveSpreadsheetId();
+  try {
+    return SpreadsheetApp.openById(id);
+  } catch (err) {
+    throw new Error(
+      'Tidak dapat membuka Google Sheet (ID: ' + id + '). Pastikan link benar dan akun Google pemilik Apps Script sudah diberi akses Editor pada Spreadsheet klien.'
+    );
+  }
+}
+
 function nowISO() { return Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss"); }
 function todayStr() { return Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd'); }
 function timeStr() { return Utilities.formatDate(new Date(), TIMEZONE, 'HH:mm:ss'); }
@@ -64,7 +98,12 @@ function jsonOut(obj) { return ContentService.createTextOutput(JSON.stringify(ob
 function parseBool(v) { return v === true || v === 'TRUE' || v === 'true' || v === 1 || v === '1'; }
 function toNum(v) { const n = Number(v); return isNaN(n) ? 0 : n; }
 
+// ============================================================================
+// AUTO-GENERATE SHEETS, STYLED HEADERS & CLIENT MIGRATION
+// ============================================================================
+
 function setupDatabase() {
+  REQUEST_SPREADSHEET_ID = null;
   const result = ensureDatabaseSetup(true);
   Logger.log(JSON.stringify(result, null, 2));
   return result;
@@ -117,14 +156,59 @@ function ensureDatabaseSetup(seedIfEmpty) {
 
   return {
     ok: true,
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: ss.getId(),
     spreadsheetName: ss.getName(),
     sheets: Object.keys(SCHEMA),
-    createdSheets,
-    repairedHeaders,
-    seededSheets,
+    createdSheets: createdSheets,
+    repairedHeaders: repairedHeaders,
+    seededSheets: seededSheets,
     timestamp: now
   };
+}
+
+function handleInitAndMigrate(data) {
+  const incomingId = extractSpreadsheetId(data.spreadsheetUrl || data.spreadsheetId || REQUEST_SPREADSHEET_ID);
+  if (incomingId) {
+    REQUEST_SPREADSHEET_ID = incomingId;
+  }
+
+  const hasMigration = Boolean(data && data.migrateData);
+  const result = ensureDatabaseSetup(!hasMigration);
+
+  // Simpan sebagai Spreadsheet aktif di ScriptProperties jika diminta
+  if (incomingId && data.saveAsActive !== false) {
+    try {
+      PropertiesService.getScriptProperties().setProperty('ACTIVE_SPREADSHEET_ID', incomingId);
+    } catch (e) {}
+  }
+
+  // Migrasi data master saat ini ke Google Sheet klien jika dicentang
+  if (hasMigration) {
+    const mig = data.migrateData;
+    if (Array.isArray(mig.roles) && mig.roles.length) {
+      mig.roles.forEach((r) => handleSaveRole(r));
+    }
+    if (Array.isArray(mig.users) && mig.users.length) {
+      mig.users.forEach((u) => handleSaveUser(u));
+    }
+    if (Array.isArray(mig.menu) && mig.menu.length) {
+      mig.menu.forEach((m) => handleSaveMenu(m));
+    }
+    if (Array.isArray(mig.tables) && mig.tables.length) {
+      mig.tables.forEach((t) => handleSaveTable({ ...t, status: 'Tersedia', order_aktif: '' }));
+    }
+    if (Array.isArray(mig.members) && mig.members.length) {
+      mig.members.forEach((m) => handleSaveMember(m));
+    }
+    if (mig.settings && typeof mig.settings === 'object') {
+      handleSaveSettings(mig.settings);
+    }
+    // Pastikan sheet default yang tidak termasuk migrasi tetap punya seed minimal jika kosong
+    ensureDatabaseSetup(true);
+    result.migrated = true;
+  }
+
+  return result;
 }
 
 function styleHeaderRow(sheet, colCount) {
@@ -272,21 +356,33 @@ function deleteRowByKey(sheetName, keyCol, keyVal) {
   return false;
 }
 
+// ============================================================================
+// HTTP ENTRYPOINTS
+// ============================================================================
+
 function doGet(e) {
   try {
+    const paramSheet = e && e.parameter ? (e.parameter.spreadsheetId || e.parameter.sheetId) : '';
+    REQUEST_SPREADSHEET_ID = extractSpreadsheetId(paramSheet) || null;
+
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'ping';
     if (action === 'init' || action === 'initSheets') return jsonOut(ensureDatabaseSetup(true));
     ensureDatabaseSetup(true);
     if (action === 'sync' || action === 'getAll') return jsonOut(handleSyncAll());
+    const ss = getSS();
     return jsonOut({
       ok: true,
       app: 'CAFE CL Cashier Backend',
       status: 'READY',
+      spreadsheetId: ss.getId(),
+      spreadsheetName: ss.getName(),
       serverTime: nowISO(),
       sheets: Object.keys(SCHEMA)
     });
   } catch (err) {
     return jsonOut({ ok: false, error: err.message });
+  } finally {
+    REQUEST_SPREADSHEET_ID = null;
   }
 }
 
@@ -294,16 +390,34 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
-    ensureDatabaseSetup(true);
 
     const raw = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
     const body = JSON.parse(raw);
     const action = body.action || '';
     const data = body.data || {};
 
+    // Deteksi target Spreadsheet Klien (jika dikirim dari aplikasi)
+    const targetSheetId = extractSpreadsheetId(body.spreadsheetId || data.spreadsheetUrl || data.spreadsheetId);
+    REQUEST_SPREADSHEET_ID = targetSheetId || null;
+
+    if (action === 'ping') {
+      const ss = getSS();
+      return jsonOut({
+        ok: true,
+        status: 'READY',
+        spreadsheetId: ss.getId(),
+        spreadsheetName: ss.getName(),
+        serverTime: nowISO()
+      });
+    }
+
+    if (action === 'initSheets' || action === 'switchSpreadsheet') {
+      return jsonOut(handleInitAndMigrate(data));
+    }
+
+    ensureDatabaseSetup(true);
+
     switch (action) {
-      case 'ping': return jsonOut({ ok: true, status: 'READY', serverTime: nowISO() });
-      case 'initSheets': return jsonOut(ensureDatabaseSetup(true));
       case 'syncAll': return jsonOut(handleSyncAll());
       case 'login': return jsonOut(handleLogin(data));
       case 'saveOrder': return jsonOut(handleSaveOrder(data));
@@ -328,11 +442,17 @@ function doPost(e) {
   } catch (err) {
     return jsonOut({ ok: false, error: err.message });
   } finally {
+    REQUEST_SPREADSHEET_ID = null;
     try { lock.releaseLock(); } catch (e) {}
   }
 }
 
+// ============================================================================
+// BUSINESS LOGIC HANDLERS
+// ============================================================================
+
 function handleSyncAll() {
+  const ss = getSS();
   const settingsArr = readSheetObjects('Pengaturan');
   const settingsObj = {};
   settingsArr.forEach((r) => { settingsObj[r.key] = r.value; });
@@ -395,6 +515,8 @@ function handleSyncAll() {
 
   return {
     ok: true,
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
     serverTime: nowISO(),
     data: { settings: settingsObj, roles, users, menu, tables, orders, expenses, shifts, members }
   };
@@ -415,7 +537,6 @@ function handleLogin(data) {
 }
 
 function adjustMenuStock(items, direction) {
-  // direction: -1 untuk kurangi stok, +1 untuk kembalikan stok (void)
   const menuSheet = getSS().getSheetByName('Menu');
   const menuData = menuSheet.getDataRange().getValues();
   const idIdx = SCHEMA.Menu.indexOf('id');
@@ -482,7 +603,6 @@ function handleSaveOrder(order) {
     adjustMenuStock(items, -1);
   }
 
-  // Update status Meja otomatis
   if (record.tipe_order === 'Dine-In' && record.meja && record.meja !== '-') {
     const mejaSheet = getSS().getSheetByName('Meja');
     const mejaData = mejaSheet.getDataRange().getValues();
@@ -499,7 +619,6 @@ function handleSaveOrder(order) {
     }
   }
 
-  // Update poin Member otomatis saat Lunas
   if (order.member_id && record.status_bayar === 'Lunas') {
     const memberSheet = getSS().getSheetByName('Member');
     const mData = memberSheet.getDataRange().getValues();
@@ -563,7 +682,6 @@ function handleVoidOrder(data) {
       if (rows[r][bayarIdx] === 'Dibatalkan') return { ok: true };
       sheet.getRange(r + 1, bayarIdx + 1).setValue('Dibatalkan');
       sheet.getRange(r + 1, updIdx + 1).setValue(nowISO());
-      // Kembalikan stok & bebaskan meja
       try {
         const items = JSON.parse(rows[r][itemsIdx] || '[]');
         adjustMenuStock(items, +1);

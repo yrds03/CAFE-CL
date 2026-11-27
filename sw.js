@@ -1,6 +1,6 @@
 // CAFE CL — Auto-Updating Service Worker
 // Versi cache di-update otomatis setiap build/perbaikan oleh scripts/bump-and-deploy.mjs
-const SW_VERSION = '1.0.1-20261127-1126';
+const SW_VERSION = '1.0.2-20261127-1145';
 const CACHE_NAME = `cafe-cl-cache-${SW_VERSION}`;
 
 const CORE_ASSETS = [
@@ -11,6 +11,7 @@ const CORE_ASSETS = [
   './api.js',
   './printer.js',
   './app.js',
+  './Code.gs',
   './manifest.json',
   './assets/icon.svg',
   './assets/icon-192.png',

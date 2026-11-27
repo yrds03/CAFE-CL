@@ -577,30 +577,92 @@
 
   function openGasSetupModal() {
     if (!hasPerm('settings')) {
-      toast('Hanya Owner yang dapat mengakses pengaturan integrasi server.', 'error');
+      toast('Hanya Owner yang dapat mengakses pengaturan database klien.', 'error');
       return;
     }
     const currentUrl = API.getGasUrl();
+    const currentSheetId = API.getSpreadsheetId();
+    const currentSheetName = API.getSpreadsheetName();
+
     openModal(`
       <div class="modal-head">
-        <div class="modal-title">Koneksi Server Google Sheets</div>
+        <div>
+          <div class="modal-title">Pindah / Setup Google Sheet Klien</div>
+          <div style="font-size:12px;color:var(--text-secondary)">Copas link Google Sheet klien + endpoint GAS, lalu klik Generate — 10 sheet & header langsung terbentuk otomatis!</div>
+        </div>
         <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
       </div>
-      <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px">
-        Masukkan URL endpoint Web App (<code class="mono">/exec</code>) hasil deploy backend Anda. Sistem otomatis memverifikasi & membuat seluruh 10 sheet + header di Google Sheets Anda.
-      </div>
+
+      ${currentSheetName ? `
+        <div style="padding:10px 12px;border-radius:12px;background:var(--success-bg);border:1px solid rgba(52,211,153,0.35);font-size:12px;margin-bottom:14px">
+          <strong class="text-success">● Sheet Aktif Saat Ini:</strong> ${esc(currentSheetName)} <span class="mono" style="opacity:0.8">(${esc(currentSheetId.slice(0, 8))}…${esc(currentSheetId.slice(-6))})</span>
+        </div>
+      ` : ''}
+
       <div class="field">
-        <label>Endpoint Web App URL (Rahasia)</label>
+        <label>1. Link Google Sheet Klien (atau ID Spreadsheet)</label>
+        <input id="gas-sheet-input" class="input mono" style="font-size:12px" placeholder="https://docs.google.com/spreadsheets/d/....../edit" value="${esc(currentSheetId)}" autocomplete="off" />
+        <div id="gas-sheet-preview" style="font-size:11px;margin-top:5px;color:var(--text-secondary)">
+          ${currentSheetId ? `✓ ID terdeteksi: <span class="mono text-gold">${esc(currentSheetId)}</span>` : 'Tempel link Google Sheets klien di sini'}
+        </div>
+      </div>
+
+      <div class="field">
+        <label>2. Link Web App GAS Endpoint (berakhiran /exec)</label>
         <div style="display:flex;gap:8px">
           <input id="gas-url-input" class="input mono" type="password" style="font-size:12px" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(currentUrl)}" autocomplete="off" />
           <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-gas-vis">Lihat</button>
         </div>
       </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
-        <button type="button" class="btn btn-primary" id="btn-save-gas-connect">Simpan & Generate Sheet</button>
+
+      <div class="field">
+        <label>3. Pilihan Data Awal di Sheet Klien</label>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="perm-item">
+            <input type="radio" name="mig-mode" value="fresh" checked />
+            <span>Buat Sheet Baru + Data Contoh Default Cafe (klien baru dari awal)</span>
+          </label>
+          <label class="perm-item">
+            <input type="radio" name="mig-mode" value="migrate" />
+            <span>Buat Sheet Baru + Pindahkan Menu, Meja, Role & Pengaturan saat ini ke Sheet Klien</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card" style="background:var(--bg-elevated);padding:13px;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--gold-400);margin-bottom:6px">Pindah ke Akun Google Milik Klien Sendiri?</div>
+        <div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">
+          • <strong>Cara Tercepat (5 detik):</strong> Share Google Sheet klien sebagai <em>Editor</em> ke akun Google Anda → cukup copas Link Sheet Klien di atas → klik <strong>Generate Otomatis</strong>!<br/>
+          • <strong>Pindah Penuh ke Akun Klien:</strong> Klik tombol di bawah untuk menyalin <code>Code.gs</code> yang sudah otomatis terisi ID Sheet Klien → deploy Web App di akun klien → tempel URL <code>/exec</code> di kolom #2 → klik <strong>Generate Otomatis</strong>.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-client-codegs">📋 Salin Code.gs Khusus Sheet Klien</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-download-client-codegs">⬇ Download Code.gs</button>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
+        <button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-disconnect-gas" ${!currentUrl ? 'style="visibility:hidden"' : ''}>Lepas Koneksi</button>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="button" class="btn btn-primary" id="btn-save-gas-connect">✨ Hubungkan & Generate Otomatis</button>
+        </div>
       </div>
     `);
+
+    const sheetInp = document.getElementById('gas-sheet-input');
+    const sheetPreview = document.getElementById('gas-sheet-preview');
+    sheetInp.oninput = () => {
+      const val = sheetInp.value.trim();
+      const id = API.extractSpreadsheetId(val);
+      if (!val) {
+        sheetPreview.innerHTML = 'Tempel link Google Sheets klien di sini';
+      } else if (id) {
+        sheetPreview.innerHTML = `<span class="text-success">✓ ID Sheet valid:</span> <span class="mono text-gold">${esc(id)}</span>`;
+      } else {
+        sheetPreview.innerHTML = `<span class="text-danger">! Format link/ID Google Sheets belum valid</span>`;
+      }
+    };
 
     document.getElementById('btn-toggle-gas-vis').onclick = () => {
       const inp = document.getElementById('gas-url-input');
@@ -610,31 +672,70 @@
       btn.textContent = hidden ? 'Sembunyi' : 'Lihat';
     };
 
+    document.getElementById('btn-copy-client-codegs').onclick = async () => {
+      try {
+        const { code, spreadsheetId } = await API.generateClientCodeGs(sheetInp.value.trim());
+        await navigator.clipboard.writeText(code);
+        toast(`Code.gs siap pakai disalin! (ID Sheet: ${spreadsheetId.slice(0, 10)}...)`, 'success');
+      } catch (err) {
+        toast('Gagal menyalin Code.gs: ' + err.message, 'error');
+      }
+    };
+
+    document.getElementById('btn-download-client-codegs').onclick = async () => {
+      try {
+        const { code } = await API.generateClientCodeGs(sheetInp.value.trim());
+        const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'Code.gs';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        toast('File Code.gs khusus klien berhasil diunduh!', 'success');
+      } catch (err) {
+        toast('Gagal mengunduh Code.gs: ' + err.message, 'error');
+      }
+    };
+
+    document.getElementById('btn-disconnect-gas')?.addEventListener('click', () => {
+      if (!confirm('Lepas koneksi server Google Sheets dan kembali ke Mode Lokal?')) return;
+      API.setGasUrl('');
+      API.setSpreadsheetName('');
+      toast('Koneksi server dilepas (Mode Lokal).', 'info');
+      closeModal();
+      render();
+    });
+
     document.getElementById('btn-save-gas-connect').onclick = async () => {
-      const url = document.getElementById('gas-url-input').value.trim();
+      const gasUrl = document.getElementById('gas-url-input').value.trim();
+      const sheetInput = sheetInp.value.trim();
+      const migrateCurrent = document.querySelector('input[name="mig-mode"]:checked')?.value === 'migrate';
       const btn = document.getElementById('btn-save-gas-connect');
-      if (!url) {
-        API.setGasUrl('');
-        toast('Koneksi server dilepas (Mode Lokal).', 'info');
-        closeModal();
-        render();
+
+      if (!gasUrl) {
+        toast('Masukkan Link Web App GAS (/exec) terlebih dahulu.', 'error');
         return;
       }
+
       btn.disabled = true;
-      btn.textContent = 'Menghubungkan & Generate Sheet...';
+      btn.textContent = 'Menghubungkan & Generate 10 Sheet...';
       try {
-        await API.testConnection(url);
-        API.setGasUrl(url);
-        const initRes = await API.initSheets();
-        const synced = await API.syncFromCloud();
-        if (synced.ok) state.db = synced.db;
-        toast(`Terhubung! ${initRes.sheets?.length || 10} sheet & header siap digunakan.`, 'success');
+        const res = await API.connectAndGenerate({
+          gasUrl,
+          sheetInput,
+          migrateCurrent,
+          currentDb: state.db
+        });
+        state.db = res.db;
+        const sheetLabel = res.init?.spreadsheetName || 'Google Sheet Klien';
+        const totalSheets = res.init?.sheets?.length || 10;
+        toast(`Sukses! "${sheetLabel}" terhubung & ${totalSheets} sheet + header siap!`, 'success');
         closeModal();
         render();
       } catch (err) {
-        toast('Gagal terhubung: ' + err.message, 'error');
+        toast('Gagal: ' + err.message, 'error');
         btn.disabled = false;
-        btn.textContent = 'Simpan & Generate Sheet';
+        btn.textContent = '✨ Hubungkan & Generate Otomatis';
       }
     };
   }
@@ -2273,19 +2374,24 @@
         </div>
 
         <div style="display:flex;flex-direction:column;gap:18px">
-          <!-- INTEGRASI GOOGLE SHEETS (AMAN: TANPA LINK APPS SCRIPT!) -->
+          <!-- INTEGRASI & MIGRASI GOOGLE SHEET KLIEN (OWNER ONLY, TANPA LINK APPS SCRIPT!) -->
           <div class="card">
             <div class="card-header">
               <div>
-                <div class="card-title">Sinkronisasi Google Sheets</div>
-                <div class="card-subtitle">${connected ? 'Terhubung real-time ke database' : 'Mode Lokal (belum dihubungkan)'}</div>
+                <div class="card-title">Database & Migrasi Google Sheet Klien</div>
+                <div class="card-subtitle">
+                  ${connected
+                    ? `${esc(API.getSpreadsheetName() || 'Google Sheets Terhubung')} • ID ${esc(API.getSpreadsheetId().slice(0, 6))}…${esc(API.getSpreadsheetId().slice(-5))}`
+                    : 'Mode Lokal — Copas link Sheet klien untuk generate otomatis'}
+                </div>
               </div>
               <span class="badge ${connected ? 'badge-success' : 'badge-warning'}">${connected ? '● Online' : '○ Lokal'}</span>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
-              <button type="button" class="btn btn-primary btn-sm" id="btn-set-gas-modal">⚙ Atur Endpoint Server</button>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-set-gas-modal">🔄 Pindah / Hubungkan Sheet Klien</button>
               <button type="button" class="btn btn-secondary btn-sm" id="btn-generate-sheets" ${!connected ? 'disabled' : ''}>✨ Generate Header & Sheet Otomatis</button>
-              <button type="button" class="btn btn-secondary btn-sm" id="btn-sync-now" ${!connected ? 'disabled' : ''}>↻ Sinkronkan Sekarang</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-sync-now" ${!connected ? 'disabled' : ''}>↻ Sinkronkan</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-setup-link" ${!connected ? 'disabled' : ''}>📲 Salin Link Setup Kasir Klien</button>
             </div>
           </div>
 
@@ -2970,6 +3076,16 @@
 
       document.getElementById('btn-set-gas-modal')?.addEventListener('click', openGasSetupModal);
       document.getElementById('btn-sync-now')?.addEventListener('click', () => syncCloud(false));
+      document.getElementById('btn-copy-setup-link')?.addEventListener('click', async () => {
+        const link = API.buildClientSetupLink();
+        if (!link) return;
+        try {
+          await navigator.clipboard.writeText(link);
+          toast('Link Setup Kasir Klien disalin! Buka link ini di PC/HP kasir klien untuk konek otomatis.', 'success');
+        } catch {
+          prompt('Salin link setup perangkat kasir klien ini:', link);
+        }
+      });
       document.getElementById('btn-generate-sheets')?.addEventListener('click', async () => {
         toast('Meng-generate sheet & header otomatis...', 'info');
         try {
@@ -3054,12 +3170,19 @@
 
   async function bootstrap() {
     applyTheme();
+    const setupRes = API.applySetupParamFromUrl();
+    if (setupRes.applied) {
+      state.db = API.loadLocal();
+    }
     if (state.user && !hasPerm(state.route)) {
       state.route = getFirstAllowedRoute();
     }
     render();
     await initServiceWorkerAndUpdater();
-    if (state.user && API.isConnected()) {
+    if (setupRes.applied) {
+      toast('Perangkat kasir berhasil dikonfigurasi otomatis ke Google Sheet klien!', 'success');
+      await syncCloud(true);
+    } else if (state.user && API.isConnected()) {
       syncCloud(true);
     }
   }

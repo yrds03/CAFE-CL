@@ -1,8 +1,19 @@
-// CAFE CL — Layer Data Hybrid (Google Apps Script Real-time Sync + Offline LocalStorage)
+// CAFE CL — Layer Data Hybrid (Dynamic Client Google Sheets + Offline LocalStorage)
 window.CafeAPI = (() => {
   const STORAGE_KEY = 'cafe_cl_db_v1';
   const GAS_URL_KEY = 'cafe_cl_gas_url';
+  const SHEET_ID_KEY = 'cafe_cl_sheet_id';
+  const SHEET_NAME_KEY = 'cafe_cl_sheet_name';
   const QUEUE_KEY = 'cafe_cl_sync_queue';
+
+  function extractSpreadsheetId(input) {
+    const s = String(input || '').trim();
+    if (!s) return '';
+    const match = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i) || s.match(/\/d\/([a-zA-Z0-9-_]+)/i);
+    if (match && match[1]) return match[1];
+    if (/^[a-zA-Z0-9-_]{20,}$/.test(s)) return s;
+    return '';
+  }
 
   function getGasUrl() {
     const saved = localStorage.getItem(GAS_URL_KEY);
@@ -16,8 +27,75 @@ window.CafeAPI = (() => {
     else localStorage.removeItem(GAS_URL_KEY);
   }
 
+  function getSpreadsheetId() {
+    const saved = localStorage.getItem(SHEET_ID_KEY);
+    if (saved && saved.trim()) return saved.trim();
+    return (window.CAFE_CONFIG.SPREADSHEET_ID || '').trim();
+  }
+
+  function setSpreadsheetId(idOrUrl) {
+    const id = extractSpreadsheetId(idOrUrl);
+    if (id) localStorage.setItem(SHEET_ID_KEY, id);
+    else localStorage.removeItem(SHEET_ID_KEY);
+    return id;
+  }
+
+  function getSpreadsheetName() {
+    return localStorage.getItem(SHEET_NAME_KEY) || '';
+  }
+
+  function setSpreadsheetName(name) {
+    if (name) localStorage.setItem(SHEET_NAME_KEY, String(name));
+    else localStorage.removeItem(SHEET_NAME_KEY);
+  }
+
   function isConnected() {
     return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/i.test(getGasUrl());
+  }
+
+  function clearQueue() {
+    localStorage.removeItem(QUEUE_KEY);
+  }
+
+  // Terapkan konfigurasi otomatis jika dibuka lewat Link Setup Perangkat Klien (?setup=...)
+  function applySetupParamFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('setup');
+      if (!token) return { applied: false };
+
+      const decoded = JSON.parse(decodeURIComponent(escape(atob(token))));
+      const gas = String(decoded.g || '').trim();
+      const sheet = extractSpreadsheetId(decoded.s || '');
+
+      if (/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/i.test(gas)) {
+        const prevSheet = getSpreadsheetId();
+        setGasUrl(gas);
+        if (sheet) {
+          setSpreadsheetId(sheet);
+          if (sheet !== prevSheet) {
+            clearQueue();
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+        // Hapus parameter setup dari address bar segera demi keamanan
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, cleanUrl);
+        return { applied: true, sheetId: sheet };
+      }
+    } catch (e) {
+      console.warn('Invalid setup token ignored');
+    }
+    return { applied: false };
+  }
+
+  function buildClientSetupLink() {
+    const g = getGasUrl();
+    const s = getSpreadsheetId();
+    if (!g) return '';
+    const payload = btoa(unescape(encodeURIComponent(JSON.stringify({ g, s }))));
+    const base = window.location.origin + window.location.pathname;
+    return `${base}?setup=${encodeURIComponent(payload)}`;
   }
 
   function getDefaultDB() {
@@ -149,15 +227,16 @@ window.CafeAPI = (() => {
     localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
   }
 
-  async function postGas(action, data = {}) {
-    const url = getGasUrl();
-    if (!url) throw new Error('URL Google Apps Script belum diatur.');
+  async function postGas(action, data = {}, customUrl = null, customSheetId = null) {
+    const url = (customUrl || getGasUrl()).trim();
+    if (!url) throw new Error('URL Endpoint Web App belum diatur.');
 
+    const spreadsheetId = customSheetId !== null ? customSheetId : getSpreadsheetId();
     const res = await fetch(url, {
       method: 'POST',
       mode: 'cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, data })
+      body: JSON.stringify({ action, spreadsheetId, data })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const json = await res.json();
@@ -165,24 +244,85 @@ window.CafeAPI = (() => {
     return json;
   }
 
-  async function testConnection(customUrl) {
+  async function testConnection(customUrl, customSheetId = '') {
     const url = (customUrl || getGasUrl()).trim();
     if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/i.test(url)) {
       throw new Error('Format URL harus berawalan https://script.google.com/macros/s/... dan berakhiran /exec');
     }
-    const res = await fetch(url, {
-      method: 'POST',
-      mode: 'cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'ping', data: {} })
-    });
-    const json = await res.json();
-    if (!json || !json.ok) throw new Error(json?.error || 'Koneksi gagal.');
-    return json;
+    const sid = customSheetId ? extractSpreadsheetId(customSheetId) : getSpreadsheetId();
+    return postGas('ping', {}, url, sid);
   }
 
-  async function initSheets() {
-    return postGas('initSheets', {});
+  async function initSheets(extraData = {}) {
+    return postGas('initSheets', extraData);
+  }
+
+  // 1-Klik Pindah / Hubungkan Google Sheet Klien + Generate Otomatis + Opsional Migrasi Data
+  async function connectAndGenerate({ gasUrl, sheetInput, migrateCurrent, currentDb }) {
+    const cleanGas = String(gasUrl || '').trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/i.test(cleanGas)) {
+      throw new Error('Link Web App GAS harus berawalan https://script.google.com/macros/s/... dan berakhiran /exec');
+    }
+
+    const oldSheetId = getSpreadsheetId();
+    const extractedSheetId = sheetInput ? extractSpreadsheetId(sheetInput) : '';
+    if (sheetInput && !extractedSheetId) {
+      throw new Error('Link atau ID Google Sheet klien tidak valid. Copas link lengkap Google Sheets Anda.');
+    }
+
+    const targetSheetId = extractedSheetId || oldSheetId;
+
+    // 1. Test akses ke endpoint + Spreadsheet target
+    const pingRes = await testConnection(cleanGas, targetSheetId);
+
+    // 2. Simpan konfigurasi baru (jika pindah sheet berbeda, bersihkan antrean lama agar tidak campur!)
+    const switchedSheet = Boolean(targetSheetId && targetSheetId !== oldSheetId);
+    if (switchedSheet) clearQueue();
+    setGasUrl(cleanGas);
+    if (targetSheetId) setSpreadsheetId(targetSheetId);
+    if (pingRes.spreadsheetName) setSpreadsheetName(pingRes.spreadsheetName);
+
+    // 3. Auto-generate semua 10 sheet + header + opsional migrasi data master saat ini
+    const payload = {
+      spreadsheetId: targetSheetId,
+      saveAsActive: true,
+      migrateData: migrateCurrent && currentDb ? {
+        settings: currentDb.settings,
+        roles: currentDb.roles,
+        users: currentDb.users,
+        menu: currentDb.menu,
+        tables: currentDb.tables,
+        members: currentDb.members
+      } : null
+    };
+
+    const initRes = await postGas('initSheets', payload, cleanGas, targetSheetId);
+    if (initRes.spreadsheetName) setSpreadsheetName(initRes.spreadsheetName);
+    if (initRes.spreadsheetId) setSpreadsheetId(initRes.spreadsheetId);
+
+    // 4. Tarik data bersih dari Sheet Klien yang baru ter-generate
+    const synced = await syncFromCloud(switchedSheet);
+    return {
+      ok: true,
+      init: initRes,
+      db: synced.db,
+      switchedSheet
+    };
+  }
+
+  // Ambil Code.gs & otomatis ganti DEFAULT_SPREADSHEET_ID dengan Sheet ID Klien
+  async function generateClientCodeGs(sheetInput) {
+    const res = await fetch(`./Code.gs?t=${Date.now()}`, { cache: 'no-cache' });
+    if (!res.ok) throw new Error('Gagal memuat template Code.gs');
+    let code = await res.text();
+    const targetId = extractSpreadsheetId(sheetInput) || getSpreadsheetId();
+    if (targetId) {
+      code = code.replace(
+        /const DEFAULT_SPREADSHEET_ID = '[^']+';/,
+        `const DEFAULT_SPREADSHEET_ID = '${targetId}';`
+      );
+    }
+    return { code, spreadsheetId: targetId };
   }
 
   async function flushQueue() {
@@ -203,12 +343,15 @@ window.CafeAPI = (() => {
     return flushed;
   }
 
-  async function syncFromCloud() {
+  async function syncFromCloud(replaceOrdersOnSwitch = false) {
     if (!isConnected()) return { ok: false, localOnly: true, db: loadLocal() };
     await flushQueue();
     const res = await postGas('syncAll', {});
     if (res && res.ok && res.data) {
-      const current = loadLocal();
+      if (res.spreadsheetName) setSpreadsheetName(res.spreadsheetName);
+      if (res.spreadsheetId) setSpreadsheetId(res.spreadsheetId);
+
+      const current = replaceOrdersOnSwitch ? getDefaultDB() : loadLocal();
       const merged = {
         ...current,
         settings: { ...window.CAFE_CONFIG.DEFAULT_SETTINGS, ...(res.data.settings || {}) },
@@ -216,9 +359,9 @@ window.CafeAPI = (() => {
         users: res.data.users?.length ? res.data.users : current.users,
         menu: res.data.menu?.length ? res.data.menu : current.menu,
         tables: res.data.tables?.length ? res.data.tables : current.tables,
-        orders: Array.isArray(res.data.orders) ? res.data.orders : current.orders,
-        expenses: Array.isArray(res.data.expenses) ? res.data.expenses : current.expenses,
-        shifts: Array.isArray(res.data.shifts) ? res.data.shifts : current.shifts,
+        orders: Array.isArray(res.data.orders) ? res.data.orders : (replaceOrdersOnSwitch ? [] : current.orders),
+        expenses: Array.isArray(res.data.expenses) ? res.data.expenses : (replaceOrdersOnSwitch ? [] : current.expenses),
+        shifts: Array.isArray(res.data.shifts) ? res.data.shifts : (replaceOrdersOnSwitch ? [] : current.shifts),
         members: Array.isArray(res.data.members) ? res.data.members : current.members,
         lastSync: new Date().toISOString()
       };
@@ -246,14 +389,23 @@ window.CafeAPI = (() => {
   }
 
   return {
+    extractSpreadsheetId,
     getGasUrl,
     setGasUrl,
+    getSpreadsheetId,
+    setSpreadsheetId,
+    getSpreadsheetName,
+    setSpreadsheetName,
     isConnected,
+    applySetupParamFromUrl,
+    buildClientSetupLink,
     loadLocal,
     saveLocal,
     getQueue,
     testConnection,
     initSheets,
+    connectAndGenerate,
+    generateClientCodeGs,
     syncFromCloud,
     flushQueue,
     sendAction

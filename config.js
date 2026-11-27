@@ -2,8 +2,8 @@
 window.CAFE_CONFIG = {
   APP_NAME: 'CAFE CL',
   APP_TAGLINE: 'Artisanal Coffee & Cashier POS',
-  APP_VERSION: '1.0.1',
-  APP_BUILD: '20261127-1126',
+  APP_VERSION: '1.0.2',
+  APP_BUILD: '20261127-1145',
 
   // ID Google Spreadsheet terikat (tanpa mengekspos link editor Apps Script demi keamanan)
   SPREADSHEET_ID: '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ',
