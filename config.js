@@ -1,9 +1,9 @@
-// CAFE CL — Konfigurasi Aplikasi (Fokus Kasir & Keamanan)
+// NOUS — Konfigurasi Aplikasi (Fokus Kasir & Keamanan)
 window.CAFE_CONFIG = {
-  APP_NAME: 'CAFE CL',
-  APP_TAGLINE: 'Artisanal Coffee & Cashier POS',
-  APP_VERSION: '1.0.5',
-  APP_BUILD: '20261127-1215',
+  APP_NAME: 'NOUS',
+  APP_TAGLINE: 'Coffee & Cashier POS',
+  APP_VERSION: '1.0.6',
+  APP_BUILD: '20261127-1557',
 
   // ID Google Spreadsheet terikat (tanpa mengekspos link editor Apps Script demi keamanan)
   SPREADSHEET_ID: '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ',
@@ -53,21 +53,21 @@ window.CAFE_CONFIG = {
   ],
 
   DEFAULT_SETTINGS: {
-    cafe_name: 'CAFE CL',
-    tagline: 'Artisanal Coffee & Roastery',
+    cafe_name: 'NOUS',
+    tagline: 'Coffee & Eatery',
     address: 'Jl. Aroma Kopi No. 27, Kota Anda',
     phone: '0812-3456-7890',
-    instagram: '@cafecl.official',
+    instagram: '@nous.coffee',
     tax_percent: 10,
     service_percent: 0,
-    receipt_footer: 'Terima kasih telah menikmati kopi di CAFE CL. Sampai jumpa kembali!',
+    receipt_footer: 'Terima kasih telah menikmati kopi di NOUS. Sampai jumpa kembali!',
     paper_size: '58mm',
     auto_print_bt: false,
     currency: 'Rp'
   },
 
   DEFAULT_USERS: [
-    { id: 'USR-001', username: 'owner', password: 'owner123', nama: 'Owner CAFE CL', role: 'Owner', pin: '1111', aktif: true },
+    { id: 'USR-001', username: 'owner', password: 'owner123', nama: 'Owner NOUS', role: 'Owner', pin: '1111', aktif: true },
     { id: 'USR-002', username: 'kasir', password: 'kasir123', nama: 'Kasir Utama', role: 'Kasir', pin: '2222', aktif: true }
   ],
 
@@ -86,7 +86,7 @@ window.CAFE_CONFIG = {
 
   DEFAULT_MENU: [
     {
-      id: 'MNU-001', kode: 'SIG-01', nama: 'CL Signature Palm Sugar Latte', kategori: 'Signature',
+      id: 'MNU-001', kode: 'SIG-01', nama: 'NOUS Signature Palm Sugar Latte', kategori: 'Signature',
       harga: 28000, hpp: 10500, stok: 80, deskripsi: 'Double ristretto house blend dengan gula aren organik & susu velvety.',
       foto_url: '', varian: 'Iced,Hot|Normal Sugar,Less Sugar,No Sugar|Fresh Milk,Oat Milk (+8000)', tersedia: true, favorit: true
     },
@@ -97,7 +97,7 @@ window.CAFE_CONFIG = {
     },
     {
       id: 'MNU-003', kode: 'SIG-03', nama: 'Butterscotch Sea Salt Latte', kategori: 'Signature',
-      harga: 34000, hpp: 12800, stok: 50, deskripsi: 'Creamy butterscotch dipadukan sea salt foam lembut khas CAFE CL.',
+      harga: 34000, hpp: 12800, stok: 50, deskripsi: 'Creamy butterscotch dipadukan sea salt foam lembut khas NOUS.',
       foto_url: '', varian: 'Iced,Hot|Normal Sugar,Less Sugar', tersedia: true, favorit: true
     },
     {

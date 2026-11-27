@@ -199,10 +199,21 @@ window.CafeAPI = (() => {
       }
       const parsed = JSON.parse(raw);
       const defaults = getDefaultDB();
+      const mergedSettings = { ...defaults.settings, ...(parsed.settings || {}) };
+      // Migrasi otomatis nama brand lama 'CAFE CL' -> 'NOUS' pada perangkat yang sudah pernah buka
+      if (!mergedSettings.cafe_name || mergedSettings.cafe_name === 'CAFE CL') {
+        mergedSettings.cafe_name = 'NOUS';
+      }
+      if (mergedSettings.instagram === '@cafecl.official') {
+        mergedSettings.instagram = '@nous.coffee';
+      }
+      if (String(mergedSettings.receipt_footer || '').includes('CAFE CL')) {
+        mergedSettings.receipt_footer = mergedSettings.receipt_footer.replace(/CAFE CL/g, 'NOUS');
+      }
       return {
         ...defaults,
         ...parsed,
-        settings: { ...defaults.settings, ...(parsed.settings || {}) },
+        settings: mergedSettings,
         roles: Array.isArray(parsed.roles) && parsed.roles.length ? parsed.roles : defaults.roles
       };
     } catch (e) {

@@ -214,8 +214,8 @@ function handleInitAndMigrate(data) {
 function styleHeaderRow(sheet, colCount) {
   const headerRange = sheet.getRange(1, 1, 1, colCount);
   headerRange
-    .setBackground('#241610')
-    .setFontColor('#F4D59B')
+    .setBackground('#4A516F')
+    .setFontColor('#F4F2EA')
     .setFontWeight('bold')
     .setFontFamily('Arial')
     .setFontSize(10)
@@ -236,7 +236,7 @@ function getSeedRows(sheetName, now) {
   }
   if (sheetName === 'Users') {
     return [
-      ['USR-001', 'owner', 'owner123', 'Owner CAFE CL', 'Owner', '1111', true, now],
+      ['USR-001', 'owner', 'owner123', 'Owner NOUS', 'Owner', '1111', true, now],
       ['USR-002', 'kasir', 'kasir123', 'Kasir Utama', 'Kasir', '2222', true, now]
     ];
   }
@@ -284,14 +284,14 @@ function getSeedRows(sheetName, now) {
   }
   if (sheetName === 'Pengaturan') {
     return [
-      ['cafe_name', 'CAFE CL', now],
-      ['tagline', 'Artisanal Coffee & Roastery', now],
+      ['cafe_name', 'NOUS', now],
+      ['tagline', 'Coffee & Eatery', now],
       ['address', 'Jl. Aroma Kopi No. 27, Kota Anda', now],
       ['phone', '0812-3456-7890', now],
-      ['instagram', '@cafecl.official', now],
+      ['instagram', '@nous.coffee', now],
       ['tax_percent', '10', now],
       ['service_percent', '0', now],
-      ['receipt_footer', 'Terima kasih telah menikmati kopi di CAFE CL. Sampai jumpa kembali!', now],
+      ['receipt_footer', 'Terima kasih telah menikmati kopi di NOUS. Sampai jumpa kembali!', now],
       ['paper_size', '58mm', now],
       ['auto_print_bt', 'false', now],
       ['currency', 'Rp', now]

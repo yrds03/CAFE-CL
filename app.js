@@ -1,5 +1,5 @@
 /* ============================================================================
- * CAFE CL — Cashier-Focused POS, Bluetooth Thermal Printer, RBAC & Auto-Update PWA
+ * NOUS — Cashier-Focused POS, Bluetooth Thermal Printer, RBAC & Auto-Update PWA
  * ============================================================================ */
 (() => {
   'use strict';
@@ -240,7 +240,7 @@
     if (!localStorage.getItem(BUILD_KEY)) localStorage.setItem(BUILD_KEY, localBuild);
 
     if (isStartup) {
-      setOverlay(true, 'Memeriksa Pembaruan Terbaru...', 'Menghubungkan ke server CAFE CL & Service Worker', 38, `v${CFG.APP_VERSION}`);
+      setOverlay(true, 'Memeriksa Pembaruan Terbaru...', 'Menghubungkan ke server NOUS & Service Worker', 38, `v${CFG.APP_VERSION}`);
     }
 
     let remote = null;
@@ -259,7 +259,7 @@
     }
 
     if (isStartup) {
-      setOverlay(true, 'Aplikasi Versi Terbaru Siap', 'Memuat sistem kasir CAFE CL...', 100, `v${CFG.APP_VERSION} • Up to date`);
+      setOverlay(true, 'Aplikasi Versi Terbaru Siap', 'Memuat sistem kasir NOUS...', 100, `v${CFG.APP_VERSION} • Up to date`);
       setTimeout(() => {
         if (!state.updateInProgress) setOverlay(false);
       }, 650);
@@ -277,7 +277,7 @@
     window.addEventListener('appinstalled', () => {
       state.deferredPrompt = null;
       state.isStandalone = true;
-      toast('CAFE CL berhasil diinstall di perangkat Anda!', 'success');
+      toast('NOUS berhasil diinstall di perangkat Anda!', 'success');
       render();
     });
 
@@ -493,7 +493,7 @@
   // ==========================================================================
   async function handleInstallDevice(targetDevice) {
     if (state.isStandalone) {
-      toast('Aplikasi CAFE CL sudah terinstall dan berjalan di perangkat ini!', 'success');
+      toast('Aplikasi NOUS sudah terinstall dan berjalan di perangkat ini!', 'success');
       return;
     }
 
@@ -502,7 +502,7 @@
       const choice = await state.deferredPrompt.userChoice;
       state.deferredPrompt = null;
       if (choice.outcome === 'accepted') {
-        toast(`Menginstall CAFE CL untuk ${targetDevice}...`, 'success');
+        toast(`Menginstall NOUS untuk ${targetDevice}...`, 'success');
       }
       render();
       return;
@@ -512,14 +512,14 @@
     if (targetDevice === 'PC') {
       openModal(`
         <div class="modal-head">
-          <div class="modal-title">Download CAFE CL untuk PC</div>
+          <div class="modal-title">Download NOUS untuk PC</div>
           <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
-        <p class="text-muted" style="margin-bottom:14px">Install CAFE CL sebagai aplikasi Desktop di Windows / macOS agar bisa dibuka langsung dari Start Menu atau Desktop:</p>
+        <p class="text-muted" style="margin-bottom:14px">Install NOUS sebagai aplikasi Desktop di Windows / macOS agar bisa dibuka langsung dari Start Menu atau Desktop:</p>
         <div class="card" style="background:var(--bg-elevated);margin-bottom:14px">
           <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
             <div><strong class="text-gold">1. Chrome / Edge di PC:</strong> Klik ikon <strong>Install (⊕ / monitor ↓)</strong> di ujung kanan address bar browser.</div>
-            <div><strong class="text-gold">2. Atau via Menu Browser:</strong> Klik menu <strong>⋮ (kanan atas)</strong> → <strong>Cast, save, and share</strong> → <strong>Install CAFE CL</strong>.</div>
+            <div><strong class="text-gold">2. Atau via Menu Browser:</strong> Klik menu <strong>⋮ (kanan atas)</strong> → <strong>Cast, save, and share</strong> → <strong>Install NOUS</strong>.</div>
             <div><strong class="text-gold">3. Selesai!</strong> Aplikasi langsung siap dipakai & mendukung Auto-Update otomatis.</div>
           </div>
         </div>
@@ -530,17 +530,17 @@
     } else {
       openModal(`
         <div class="modal-head">
-          <div class="modal-title">Download CAFE CL untuk HP</div>
+          <div class="modal-title">Download NOUS untuk HP</div>
           <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
-        <p class="text-muted" style="margin-bottom:14px">Pasang CAFE CL di Layar Utama HP (Android / iPhone) seperti aplikasi native & otomatis update:</p>
+        <p class="text-muted" style="margin-bottom:14px">Pasang NOUS di Layar Utama HP (Android / iPhone) seperti aplikasi native & otomatis update:</p>
         <div class="card" style="background:var(--bg-elevated);margin-bottom:12px">
           <div style="font-weight:700;color:var(--gold-400);margin-bottom:6px">Android (Chrome / Edge)</div>
           <div style="font-size:13px;color:var(--text-secondary)">
             1. Buka halaman ini di <strong>Google Chrome</strong>.<br/>
             2. Tap tombol menu <strong>⋮ (pojok kanan atas)</strong>.<br/>
             3. Pilih <strong>"Install aplikasi"</strong> atau <strong>"Tambahkan ke layar utama"</strong>.<br/>
-            4. Tap <strong>Install</strong> — ikon CAFE CL langsung muncul di HP Anda!
+            4. Tap <strong>Install</strong> — ikon NOUS langsung muncul di HP Anda!
           </div>
         </div>
         <div class="card" style="background:var(--bg-elevated)">
@@ -754,7 +754,7 @@
   function applyTheme() {
     document.documentElement.setAttribute('data-theme', state.theme);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#0F0A08' : '#F6F1EA');
+    if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#141726' : '#F3F1EA');
   }
 
   function toggleTheme() {
@@ -810,7 +810,7 @@
       <div class="login-page">
         <aside class="login-hero">
           <div class="hero-top">
-            <img src="./assets/icon.svg" alt="${esc(cafeName)}" />
+            <img src="./assets/icon-192.png?v=nous1" alt="${esc(cafeName)}" />
             <div>
               <div class="hero-brand-name">${esc(cafeName)}</div>
               <div class="hero-brand-sub">${esc(tagline)}</div>
@@ -854,7 +854,7 @@
         <main class="login-panel">
           <div class="login-box">
             <div class="login-mobile-brand">
-              <img src="./assets/icon.svg" alt="${esc(cafeName)}" />
+              <img src="./assets/icon-192.png?v=nous1" alt="${esc(cafeName)}" />
               <div class="hero-brand-name" style="color:var(--gold-400)">${esc(cafeName)}</div>
               <div class="hero-brand-sub">${esc(tagline)}</div>
             </div>
@@ -908,7 +908,7 @@
             <div class="download-app-box">
               <div class="download-app-header">
                 <div class="download-app-title">
-                  <span>⬇</span> Download Aplikasi CAFE CL
+                  <span>⬇</span> Download Aplikasi NOUS
                 </div>
                 <span class="download-status-tag">
                   ${state.isStandalone ? '✓ Terinstall' : state.deferredPrompt ? 'Siap 1-Klik Install' : 'PWA PC & HP'}
@@ -1019,7 +1019,7 @@
 
         <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
           <div class="sidebar-brand">
-            <img src="./assets/icon.svg" alt="${esc(cafeName)}" />
+            <img src="./assets/icon-192.png?v=nous1" alt="${esc(cafeName)}" />
             <div>
               <div class="sidebar-brand-title">${esc(cafeName)}</div>
               <div class="sidebar-brand-sub">v${esc(CFG.APP_VERSION)} • Kasir</div>
@@ -1214,7 +1214,7 @@
           <div class="card-header">
             <div>
               <div class="card-title">Tren Penjualan 7 Hari Terakhir</div>
-              <div class="card-subtitle">Akumulasi omzet harian CAFE CL</div>
+              <div class="card-subtitle">Akumulasi omzet harian NOUS</div>
             </div>
             ${hasPerm('pos') ? `<button type="button" class="btn btn-primary btn-sm" data-nav="pos">+ Pesanan Baru</button>` : ''}
           </div>
@@ -1375,7 +1375,7 @@
                   </div>
                   <div class="menu-body">
                     <div class="menu-name">${esc(m.nama)}</div>
-                    <div class="menu-desc">${esc(m.deskripsi || 'Menu spesial racikan CAFE CL')}</div>
+                    <div class="menu-desc">${esc(m.deskripsi || 'Menu spesial racikan NOUS')}</div>
                     <div class="menu-foot">
                       <span class="menu-price">${fmtRp(m.harga)}</span>
                       <span class="menu-stock">${soldOut ? 'Habis' : `Stok ${m.stok}`}</span>
@@ -1822,7 +1822,7 @@
     const receiptHTML = `
       <div style="font-family:var(--font-mono);font-size:12px;background:#fff;color:#111;padding:18px;border-radius:14px">
         <div style="text-align:center;margin-bottom:10px">
-          <div style="font-size:16px;font-weight:800;letter-spacing:2px">${esc(s.cafe_name || 'CAFE CL')}</div>
+          <div style="font-size:16px;font-weight:800;letter-spacing:2px">${esc(s.cafe_name || 'NOUS')}</div>
           <div style="font-size:11px">${esc(s.address || '')}</div>
           <div style="font-size:11px">${esc(s.phone || '')} ${s.instagram ? '• ' + esc(s.instagram) : ''}</div>
         </div>
@@ -1910,7 +1910,7 @@
 
     document.getElementById('btn-share-wa').onclick = () => {
       const lines = [
-        `*${s.cafe_name || 'CAFE CL'}*`,
+        `*${s.cafe_name || 'NOUS'}*`,
         `Invoice: ${order.no_invoice}`,
         `Tanggal: ${order.tanggal} ${order.waktu}`,
         `Tamu: ${order.pelanggan} (${order.tipe_order}${order.meja !== '-' ? ' - ' + order.meja : ''})`,
@@ -3028,16 +3028,16 @@
       document.getElementById('btn-export-orders')?.addEventListener('click', () => {
         const { headers, rows, footer, suffix } = buildOrderExportData();
         if (!rows.length) { toast('Tidak ada data transaksi untuk diexport.', 'error'); return; }
-        downloadCSV(`CAFE-CL-Transaksi-${suffix}.csv`, [headers, ...rows, footer]);
+        downloadCSV(`NOUS-Transaksi-${suffix}.csv`, [headers, ...rows, footer]);
         toast('CSV rapi berhasil diunduh (siap buka di Excel)!', 'success');
       });
 
       document.getElementById('btn-export-orders-excel')?.addEventListener('click', () => {
         const { headers, rows, footer, suffix } = buildOrderExportData();
         if (!rows.length) { toast('Tidak ada data transaksi untuk diexport.', 'error'); return; }
-        const cafeName = state.db.settings?.cafe_name || 'CAFE CL';
+        const cafeName = state.db.settings?.cafe_name || 'NOUS';
         downloadExcel(
-          `CAFE-CL-Laporan-Transaksi-${suffix}.xls`,
+          `NOUS-Laporan-Transaksi-${suffix}.xls`,
           `LAPORAN TRANSAKSI PENJUALAN — ${cafeName}`,
           `Periode: ${state.txDate || 'Semua Tanggal'} • Dicetak: ${new Date().toLocaleString('id-ID')}`,
           headers,
@@ -3052,7 +3052,7 @@
     // Finance events
     if (state.route === 'finance') {
       document.getElementById('btn-export-finance-excel')?.addEventListener('click', () => {
-        const cafeName = state.db.settings?.cafe_name || 'CAFE CL';
+        const cafeName = state.db.settings?.cafe_name || 'NOUS';
         const validOrders = (state.db.orders || []).filter((o) => o.status_bayar === 'Lunas');
         const totalOmzet = validOrders.reduce((s, o) => s + Number(o.total || 0), 0);
         let totalHpp = 0;
@@ -3072,7 +3072,7 @@
         const footer = ['', 'LABA BERSIH', '', '', '', '', netProfit];
 
         downloadExcel(
-          `CAFE-CL-Laba-Rugi-${todayISO()}.xls`,
+          `NOUS-Laba-Rugi-${todayISO()}.xls`,
           `LAPORAN KEUANGAN & LABA RUGI — ${cafeName}`,
           `Dicetak: ${new Date().toLocaleString('id-ID')}`,
           headers,
@@ -3359,14 +3359,14 @@
         <style>
           body { font-family: Arial, sans-serif; font-size: 11pt; }
           table { border-collapse: collapse; width: 100%; }
-          th, td { border: 1px solid #C8B9A6; padding: 6px 10px; vertical-align: middle; }
-          .title { font-size: 15pt; font-weight: bold; background: #241610; color: #F4D59B; text-align: left; border: none; padding: 10px; }
-          .sub { font-size: 10pt; background: #362218; color: #E5D4C0; text-align: left; border: none; padding: 6px 10px; }
-          .th { background: #2B1A12; color: #F4D59B; font-weight: bold; text-align: center; white-space: nowrap; }
-          .even { background: #FAF6F0; }
+          th, td { border: 1px solid #C5CADB; padding: 6px 10px; vertical-align: middle; }
+          .title { font-size: 15pt; font-weight: bold; background: #4A516F; color: #F4F2EA; text-align: left; border: none; padding: 10px; }
+          .sub { font-size: 10pt; background: #363C56; color: #D7DCED; text-align: left; border: none; padding: 6px 10px; }
+          .th { background: #3F4663; color: #F4F2EA; font-weight: bold; text-align: center; white-space: nowrap; }
+          .even { background: #F4F5FA; }
           .num { text-align: right; mso-number-format:"\\#\\,\\#\\#0"; white-space: nowrap; }
           .text { mso-number-format:"\\@"; }
-          .foot { background: #EFE3D0; font-weight: bold; color: #241610; }
+          .foot { background: #E4E7F4; font-weight: bold; color: #4A516F; }
         </style>
       </head>
       <body>

@@ -1,6 +1,6 @@
 // CAFE CL — Auto-Updating Service Worker
 // Versi cache di-update otomatis setiap build/perbaikan oleh scripts/bump-and-deploy.mjs
-const SW_VERSION = '1.0.5-20261127-1215';
+const SW_VERSION = '1.0.6-20261127-1557';
 const CACHE_NAME = `cafe-cl-cache-${SW_VERSION}`;
 
 const CORE_ASSETS = [
@@ -12,11 +12,10 @@ const CORE_ASSETS = [
   './printer.js',
   './app.js',
   './Code.gs',
-  './manifest.json',
-  './assets/icon.svg',
-  './assets/icon-192.png',
-  './assets/icon-512.png',
-  './assets/apple-touch-icon.png'
+  './manifest.json?v=nous1',
+  './assets/icon-192.png?v=nous1',
+  './assets/icon-512.png?v=nous1',
+  './assets/apple-touch-icon.png?v=nous1'
 ];
 
 // Install: langsung cache aset inti dan aktifkan tanpa menunggu tab lama ditutup

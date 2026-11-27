@@ -1,36 +1,36 @@
 {
-  "name": "CAFE CL — Artisanal Coffee & Cashier POS",
-  "short_name": "CAFE CL",
-  "description": "Aplikasi PWA Kasir POS, Manajemen Meja, Menu & Keuangan khusus Cafe dengan printer thermal Bluetooth dan sinkronisasi Google Sheets.",
+  "name": "NOUS — Cafe & Cashier POS",
+  "short_name": "NOUS",
+  "description": "Aplikasi PWA Kasir POS NOUS Cafe, Printer Thermal Bluetooth, Manajemen Meja & Keuangan terintegrasi Google Sheets.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0F0A08",
-  "theme_color": "#0F0A08",
+  "background_color": "#141726",
+  "theme_color": "#4A516F",
   "lang": "id",
   "categories": ["business", "food", "productivity"],
   "icons": [
     {
-      "src": "./assets/icon-192.png",
+      "src": "./assets/icon-192.png?v=nous1",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./assets/icon-192.png",
+      "src": "./assets/icon-192.png?v=nous1",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "./assets/icon-512.png",
+      "src": "./assets/icon-512.png?v=nous1",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./assets/icon-512.png",
+      "src": "./assets/icon-512.png?v=nous1",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -41,13 +41,13 @@
       "name": "Buka Kasir POS",
       "short_name": "Kasir POS",
       "url": "./index.html#pos",
-      "icons": [{ "src": "./assets/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "./assets/icon-192.png?v=nous1", "sizes": "192x192" }]
     },
     {
-      "name": "Denah Meja Cafe",
+      "name": "Denah Meja NOUS",
       "short_name": "Meja Cafe",
       "url": "./index.html#tables",
-      "icons": [{ "src": "./assets/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "./assets/icon-192.png?v=nous1", "sizes": "192x192" }]
     }
   ]
 }

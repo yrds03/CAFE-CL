@@ -1,6 +1,6 @@
 {
-  "version": "1.0.5",
-  "build": "20261127-1215",
-  "releasedAt": "2026-11-27T05:15:24.459Z",
-  "notes": "Update v1.0.5: Fix tombol Bayar & Open Bill terpotong di HP Landscape/Tablet, sticky footer keranjang + internal scroll mulus, dan fix native scroll Android/iOS"
+  "version": "1.0.6",
+  "build": "20261127-1557",
+  "releasedAt": "2026-11-27T08:57:38.239Z",
+  "notes": "Update v1.0.6: Rebranding penuh NOUS — Logo Capybara resmi untuk App & PWA Install Icon (PC/HP) serta tema warna Slate-Indigo & Warm Cream"
 }

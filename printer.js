@@ -183,8 +183,8 @@ window.CafePrinter = (() => {
     const w = settings.paper_size === '80mm' ? 48 : 32;
     const sep = '-'.repeat(w);
     const bytes = escPosEncode([
-      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'CAFE CL' },
-      { align: 'center', text: settings.tagline || 'Artisanal Coffee & POS' },
+      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'NOUS' },
+      { align: 'center', text: settings.tagline || 'Coffee & Cashier POS' },
       { align: 'center', text: sep },
       { align: 'center', bold: true, text: 'TEST PRINT BERHASIL!' },
       { align: 'left', text: formatPair('Printer', getDeviceName(), w) },
@@ -201,7 +201,7 @@ window.CafePrinter = (() => {
     const sep = '-'.repeat(w);
     const cur = settings.currency || 'Rp';
     const lines = [
-      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'CAFE CL' },
+      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'NOUS' },
       { align: 'center', text: settings.address || '' },
       { align: 'center', text: [settings.phone, settings.instagram].filter(Boolean).join(' | ') },
       { align: 'center', text: sep },
@@ -243,7 +243,7 @@ window.CafePrinter = (() => {
     const sep = '-'.repeat(w);
     const cur = settings.currency || 'Rp';
     const bytes = escPosEncode([
-      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'CAFE CL' },
+      { align: 'center', bold: true, double: true, text: settings.cafe_name || 'NOUS' },
       { align: 'center', bold: true, text: 'LAPORAN TUTUP SHIFT KASIR' },
       { align: 'center', text: sep },
       { align: 'left', text: formatPair('Kasir', shift.kasir, w) },
@@ -256,7 +256,7 @@ window.CafePrinter = (() => {
       { align: 'left', bold: true, text: formatPair('Kas Aktual', fmtIDR(shift.kas_aktual, cur), w) },
       { align: 'left', bold: true, text: formatPair('Selisih', fmtIDR(shift.selisih, cur), w) },
       { align: 'center', text: sep },
-      { align: 'center', text: 'Dicetak oleh sistem CAFE CL' }
+      { align: 'center', text: 'Dicetak oleh sistem NOUS' }
     ]);
     await writeBytes(bytes);
   }
