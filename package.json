@@ -1,0 +1,10 @@
+{
+  "name": "cafe-cl-pwa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CAFE CL — Artisanal Coffee POS, Barista KDS, Floor Plan & Finance PWA with Google Sheets Sync & Auto-Update",
+  "scripts": {
+    "bump": "node scripts/bump-version.mjs",
+    "deploy": "node scripts/deploy.mjs"
+  }
+}

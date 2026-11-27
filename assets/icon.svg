@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="25%" r="80%">
+      <stop offset="0%" stop-color="#2B1B14"/>
+      <stop offset="55%" stop-color="#150D0A"/>
+      <stop offset="100%" stop-color="#0A0605"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F6DFB0"/>
+      <stop offset="50%" stop-color="#D4A359"/>
+      <stop offset="100%" stop-color="#9A6B2F"/>
+    </linearGradient>
+    <linearGradient id="steam" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#D4A359" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#F6DFB0" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="26" y="26" width="460" height="460" rx="90" fill="none" stroke="url(#gold)" stroke-width="5" stroke-opacity="0.45"/>
+  <circle cx="256" cy="256" r="190" fill="none" stroke="url(#gold)" stroke-width="2" stroke-dasharray="6 10" stroke-opacity="0.3"/>
+  <!-- Steam -->
+  <path d="M214 166 C204 142 226 128 218 102" fill="none" stroke="url(#steam)" stroke-width="11" stroke-linecap="round"/>
+  <path d="M256 154 C244 126 270 112 260 84" fill="none" stroke="url(#steam)" stroke-width="13" stroke-linecap="round"/>
+  <path d="M298 166 C288 142 310 128 302 102" fill="none" stroke="url(#steam)" stroke-width="11" stroke-linecap="round"/>
+  <!-- Coffee Cup -->
+  <path d="M144 198 H344 V278 C344 334 300 374 244 374 C188 374 144 334 144 278 Z" fill="url(#gold)"/>
+  <path d="M164 218 H324 V276 C324 320 288 352 244 352 C200 352 164 320 164 276 Z" fill="#180F0B"/>
+  <!-- Latte Art Leaf -->
+  <path d="M244 242 C266 254 276 276 266 298 C258 312 244 320 244 320 C244 320 230 312 222 298 C212 276 222 254 244 242 Z" fill="url(#gold)" fill-opacity="0.9"/>
+  <path d="M244 252 V316" stroke="#180F0B" stroke-width="5" stroke-linecap="round"/>
+  <!-- Cup Handle -->
+  <path d="M340 218 H366 C394 218 412 238 412 264 C412 290 394 310 366 310 H334" fill="none" stroke="url(#gold)" stroke-width="20" stroke-linecap="round"/>
+  <!-- Saucer -->
+  <path d="M116 392 C142 414 192 424 256 424 C320 424 370 414 396 392" fill="none" stroke="url(#gold)" stroke-width="16" stroke-linecap="round"/>
+  <!-- Monogram -->
+  <text x="256" y="468" text-anchor="middle" font-family="Georgia, serif" font-size="38" font-weight="700" letter-spacing="10" fill="url(#gold)">CAFE CL</text>
+</svg>

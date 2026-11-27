@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0F0A08" />
+  <meta name="description" content="CAFE CL — Aplikasi PWA POS Kasir, Layar Barista KDS, Manajemen Meja & Keuangan khusus Cafe terintegrasi Google Sheets." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="CAFE CL" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <title>CAFE CL — Artisanal Coffee & POS System</title>
+
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- ===================================================================== -->
+  <!-- STARTUP & AUTO-UPDATE SPINNER OVERLAY (SELALU MUNCUL SAAT BUKA/UPDATE) -->
+  <!-- ===================================================================== -->
+  <div id="boot-update-overlay" class="update-overlay active" role="status" aria-live="polite">
+    <div class="update-ambient"></div>
+    <div class="update-card">
+      <div class="spinner-orbital">
+        <div class="ring ring-outer"></div>
+        <div class="ring ring-mid"></div>
+        <div class="ring ring-inner"></div>
+        <img src="./assets/icon.svg" alt="CAFE CL" class="spinner-logo" />
+      </div>
+      <div class="update-brand">CAFE CL</div>
+      <div id="update-title" class="update-title">Memeriksa Pembaruan Terbaru...</div>
+      <div id="update-subtitle" class="update-subtitle">Menyinkronkan sistem & cache aplikasi terbaru</div>
+      <div class="update-progress-track">
+        <div id="update-progress-bar" class="update-progress-bar"></div>
+      </div>
+      <div id="update-version-pill" class="update-version-pill">v1.0.0</div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- ROOT APPLICATION CONTAINER                                            -->
+  <!-- ===================================================================== -->
+  <div id="app"></div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL & TOAST CONTAINERS                                              -->
+  <!-- ===================================================================== -->
+  <div id="modal-root" class="modal-root" aria-hidden="true"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <!-- ===================================================================== -->
+  <!-- THERMAL RECEIPT PRINT CONTAINER (ONLY VISIBLE ON PRINT)               -->
+  <!-- ===================================================================== -->
+  <div id="print-receipt-area" class="print-only"></div>
+
+  <script src="./config.js"></script>
+  <script src="./api.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
