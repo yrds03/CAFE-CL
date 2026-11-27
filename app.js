@@ -1396,74 +1396,82 @@
               <strong style="font-size:15px">Keranjang Kasir</strong>
               <div style="font-size:11.5px;color:var(--text-secondary)">${cartCount} item dipilih</div>
             </div>
-            <div style="display:flex;gap:6px">
+            <div style="display:flex;gap:6px;align-items:center">
               ${state.cart.length ? `<button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-clear-cart">Hapus</button>` : ''}
               <button type="button" class="btn btn-secondary btn-icon cart-close-mobile" id="btn-close-mobile-cart" aria-label="Tutup Keranjang">✕</button>
             </div>
           </div>
 
-          <div class="order-type-tabs">
-            ${['Dine-In', 'Take Away', 'Delivery'].map((t) => `
-              <button type="button" class="type-btn ${state.orderType === t ? 'active' : ''}" data-order-type="${t}">${t}</button>
-            `).join('')}
-          </div>
-
-          <div class="cart-meta-inputs">
-            <input id="cart-customer" class="input" placeholder="Nama Pelanggan" value="${esc(state.customerName)}" />
-            <select id="cart-member" class="select">
-              <option value="">-- Member (Opsional) --</option>
-              ${(state.db.members || []).map((m) => `
-                <option value="${esc(m.id)}" ${state.selectedMemberId === m.id ? 'selected' : ''}>${esc(m.nama)} (${m.poin} pt)</option>
+          <div class="cart-scroll-body">
+            <div class="order-type-tabs">
+              ${['Dine-In', 'Take Away', 'Delivery'].map((t) => `
+                <button type="button" class="type-btn ${state.orderType === t ? 'active' : ''}" data-order-type="${t}">${t}</button>
               `).join('')}
-            </select>
-            ${state.orderType === 'Dine-In' ? `
-              <select id="cart-table" class="select" style="grid-column:1/-1">
-                <option value="">-- Pilih Meja Cafe --</option>
-                ${(state.db.tables || []).map((t) => `
-                  <option value="${esc(t.nama)}" ${state.selectedTable === t.nama ? 'selected' : ''}>
-                    ${esc(t.nama)} — ${esc(t.area)} (${esc(t.status)})
-                  </option>
+            </div>
+
+            <div class="cart-meta-inputs">
+              <input id="cart-customer" class="input" placeholder="Nama Pelanggan" value="${esc(state.customerName)}" />
+              <select id="cart-member" class="select">
+                <option value="">-- Member (Opsional) --</option>
+                ${(state.db.members || []).map((m) => `
+                  <option value="${esc(m.id)}" ${state.selectedMemberId === m.id ? 'selected' : ''}>${esc(m.nama)} (${m.poin} pt)</option>
                 `).join('')}
               </select>
-            ` : ''}
-          </div>
+              ${state.orderType === 'Dine-In' ? `
+                <select id="cart-table" class="select" style="grid-column:1/-1">
+                  <option value="">-- Pilih Meja Cafe --</option>
+                  ${(state.db.tables || []).map((t) => `
+                    <option value="${esc(t.nama)}" ${state.selectedTable === t.nama ? 'selected' : ''}>
+                      ${esc(t.nama)} — ${esc(t.area)} (${esc(t.status)})
+                    </option>
+                  `).join('')}
+                </select>
+              ` : ''}
+            </div>
 
-          <div class="cart-items">
-            ${state.cart.length ? state.cart.map((it, idx) => `
-              <div class="cart-item">
-                <div class="cart-item-info">
-                  <div class="cart-item-name">${esc(it.nama)}</div>
-                  ${it.varian ? `<div class="cart-item-var">${esc(it.varian)}</div>` : ''}
-                  ${it.catatan ? `<div class="cart-item-note">"${esc(it.catatan)}"</div>` : ''}
-                  <div class="cart-qty-ctrl">
-                    <button type="button" class="qty-btn" data-qty-dec="${idx}">−</button>
-                    <span class="mono" style="min-width:20px;text-align:center;font-weight:700">${it.qty}</span>
-                    <button type="button" class="qty-btn" data-qty-inc="${idx}">+</button>
+            <div class="cart-items">
+              ${state.cart.length ? state.cart.map((it, idx) => `
+                <div class="cart-item">
+                  <div class="cart-item-info">
+                    <div class="cart-item-name">${esc(it.nama)}</div>
+                    ${it.varian ? `<div class="cart-item-var">${esc(it.varian)}</div>` : ''}
+                    ${it.catatan ? `<div class="cart-item-note">"${esc(it.catatan)}"</div>` : ''}
+                    <div class="cart-qty-ctrl">
+                      <button type="button" class="qty-btn" data-qty-dec="${idx}">−</button>
+                      <span class="mono" style="min-width:20px;text-align:center;font-weight:700">${it.qty}</span>
+                      <button type="button" class="qty-btn" data-qty-inc="${idx}">+</button>
+                    </div>
+                  </div>
+                  <div style="text-align:right">
+                    <div class="mono" style="font-weight:700;font-size:13px">${fmtRp(it.harga * it.qty)}</div>
+                    <div style="font-size:10.5px;color:var(--text-muted)">@${fmtRp(it.harga)}</div>
                   </div>
                 </div>
-                <div style="text-align:right">
-                  <div class="mono" style="font-weight:700;font-size:13px">${fmtRp(it.harga * it.qty)}</div>
-                  <div style="font-size:10.5px;color:var(--text-muted)">@${fmtRp(it.harga)}</div>
+              `).join('') : `
+                <div class="empty-state" style="padding:20px 10px">
+                  <div class="empty-ico" style="font-size:28px;margin-bottom:6px">☕</div>
+                  <div style="font-size:12.5px">Ketuk menu untuk mulai mencatat pesanan</div>
                 </div>
+              `}
+            </div>
+
+            <div class="cart-extras">
+              <div style="display:flex;gap:8px;margin-bottom:8px">
+                <input id="cart-discount" class="input mono" type="number" min="0" placeholder="Diskon (Rp)" value="${state.discount || ''}" style="padding:7px 10px;font-size:12px" />
+                <input id="cart-note" class="input" placeholder="Catatan order..." value="${esc(state.orderNote)}" style="padding:7px 10px;font-size:12px" />
               </div>
-            `).join('') : `
-              <div class="empty-state" style="padding:28px 10px">
-                <div class="empty-ico">☕</div>
-                <div>Ketuk menu untuk mulai mencatat pesanan</div>
+              <div id="cart-subtotals-box">
+                ${renderCartSubtotalsHTML(totals)}
               </div>
-            `}
+            </div>
           </div>
 
-          <div class="cart-summary">
-            <div style="display:flex;gap:8px;margin-bottom:10px">
-              <input id="cart-discount" class="input mono" type="number" min="0" placeholder="Diskon (Rp)" value="${state.discount || ''}" style="padding:7px 10px;font-size:12px" />
-              <input id="cart-note" class="input" placeholder="Catatan order..." value="${esc(state.orderNote)}" style="padding:7px 10px;font-size:12px" />
+          <div class="cart-summary cart-footer-sticky">
+            <div class="sum-row total" style="margin-top:0;padding-top:0;border-top:none;margin-bottom:10px">
+              <span>Total Bayar</span>
+              <span id="cart-grand-total" class="mono text-gold">${fmtRp(totals.total)}</span>
             </div>
-            <div id="cart-totals-box">
-              ${renderCartTotalsHTML(totals)}
-            </div>
-
-            <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:12px">
+            <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px">
               <button type="button" class="btn btn-secondary" id="btn-open-bill" ${!state.cart.length ? 'disabled' : ''}>Open Bill</button>
               <button type="button" class="btn btn-primary" id="btn-checkout" ${!state.cart.length ? 'disabled' : ''}>Bayar Sekarang</button>
             </div>
@@ -1478,13 +1486,12 @@
     `;
   }
 
-  function renderCartTotalsHTML(totals) {
+  function renderCartSubtotalsHTML(totals) {
     return `
       <div class="sum-row"><span>Subtotal</span><span class="mono">${fmtRp(totals.subtotal)}</span></div>
       ${totals.diskon > 0 ? `<div class="sum-row text-success"><span>Diskon</span><span class="mono">−${fmtRp(totals.diskon)}</span></div>` : ''}
       ${totals.taxPct > 0 ? `<div class="sum-row"><span>Pajak PB1 (${totals.taxPct}%)</span><span class="mono">${fmtRp(totals.pajak)}</span></div>` : ''}
       ${totals.srvPct > 0 ? `<div class="sum-row"><span>Service (${totals.srvPct}%)</span><span class="mono">${fmtRp(totals.service)}</span></div>` : ''}
-      <div class="sum-row total"><span>Total Bayar</span><span class="mono text-gold">${fmtRp(totals.total)}</span></div>
     `;
   }
 
@@ -2819,10 +2826,12 @@
       document.getElementById('cart-discount')?.addEventListener('input', (e) => {
         state.discount = Math.max(0, Number(e.target.value) || 0);
         const totals = calcCartTotals();
-        const box = document.getElementById('cart-totals-box');
-        if (box) box.innerHTML = renderCartTotalsHTML(totals);
+        const subBox = document.getElementById('cart-subtotals-box');
+        if (subBox) subBox.innerHTML = renderCartSubtotalsHTML(totals);
+        const grandEl = document.getElementById('cart-grand-total');
+        if (grandEl) grandEl.textContent = fmtRp(totals.total);
         const fabTotal = document.querySelector('#btn-open-mobile-cart .mono');
-        if (fabTotal) fabTotal.textContent = fmtRp(totals.total);
+        if (fabTotal) fabTotal.textContent = fmtRp(totals.total) + ' →';
       });
       document.getElementById('cart-note')?.addEventListener('input', (e) => { state.orderNote = e.target.value; });
 

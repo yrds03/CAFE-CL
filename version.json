@@ -1,6 +1,6 @@
 {
-  "version": "1.0.4",
-  "build": "20261127-1206",
-  "releasedAt": "2026-11-27T05:06:16.943Z",
-  "notes": "Update v1.0.4: Perbaikan total scroll HP & Tablet, layout Tablet POS split-view penuh, slide-up Cart Sheet + backdrop, dan native touch UX"
+  "version": "1.0.5",
+  "build": "20261127-1215",
+  "releasedAt": "2026-11-27T05:15:24.459Z",
+  "notes": "Update v1.0.5: Fix tombol Bayar & Open Bill terpotong di HP Landscape/Tablet, sticky footer keranjang + internal scroll mulus, dan fix native scroll Android/iOS"
 }

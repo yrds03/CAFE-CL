@@ -91,14 +91,11 @@ body {
   font-size: 14px;
   line-height: 1.5;
   overflow-x: clip;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   -webkit-font-smoothing: antialiased;
 }
 
 body.scroll-locked {
   overflow: hidden;
-  touch-action: none;
 }
 
 button, a, select, input, textarea {
@@ -1397,31 +1394,42 @@ button, a, select, input, textarea {
   color: var(--text-muted);
 }
 
-/* Sticky Order Cart Panel */
+/* Sticky Order Cart Panel — Head & Tombol Bayar SELALU terlihat, tengah scroll mulus! */
 .cart-panel {
   position: sticky;
-  top: calc(var(--topbar-h) + 18px);
+  top: calc(var(--topbar-h) + 14px);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  max-height: calc(100dvh - var(--topbar-h) - 36px);
+  max-height: calc(100dvh - var(--topbar-h) - 24px);
   box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 .cart-head {
-  padding: 16px 18px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
+}
+.cart-scroll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
 }
 .order-type-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
-  padding: 12px 16px 0;
+  padding: 10px 14px 0;
+  flex-shrink: 0;
 }
 .type-btn {
   padding: 8px 6px;
@@ -1446,21 +1454,23 @@ button, a, select, input, textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 .cart-meta-inputs .input, .cart-meta-inputs .select {
   padding: 8px 10px;
   font-size: 12px;
 }
 .cart-items {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 16px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 150px;
+  gap: 9px;
+}
+.cart-extras {
+  padding: 10px 14px 12px;
+  border-top: 1px dashed var(--border-subtle);
 }
 .cart-item {
   display: flex;
@@ -1492,9 +1502,10 @@ button, a, select, input, textarea {
 }
 .qty-btn:hover { border-color: var(--gold-400); }
 .cart-summary {
-  padding: 14px 16px 16px;
+  padding: 12px 14px 14px;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
+  flex-shrink: 0;
 }
 .sum-row {
   display: flex;
@@ -1890,13 +1901,6 @@ button, a, select, input, textarea {
     pointer-events: auto;
   }
   .cart-head { padding: 10px 16px 12px; }
-  .cart-items {
-    min-height: 0;
-    flex: 1;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-  }
   .cart-summary {
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
     flex-shrink: 0;
@@ -2000,6 +2004,64 @@ button, a, select, input, textarea {
   .login-card { padding: 20px 16px; }
   .modal-actions { flex-wrap: wrap; }
   .modal-actions .btn { flex: 1; }
+}
+
+/* LANDSCAPE HP & TABLET LAYAR PENDEK (max-height: 540px — seperti HP miring 800x360!) */
+@media (max-height: 540px) and (min-width: 600px) {
+  :root {
+    --topbar-h: 50px;
+  }
+  .topbar {
+    height: var(--topbar-h);
+    min-height: var(--topbar-h);
+    padding: 0 12px;
+  }
+  .page-title { font-size: 16px; }
+  .content-body { padding: 10px 12px 20px; }
+  .pos-layout { grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; padding-bottom: 16px; }
+  .menu-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; }
+  .menu-thumb { height: 68px; }
+  .menu-art-emoji { font-size: 28px; }
+  .menu-desc { display: none; }
+  .menu-body { padding: 8px 10px 9px; }
+  .menu-name { font-size: 12.5px; }
+
+  .cart-panel {
+    position: sticky;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    top: calc(var(--topbar-h) + 8px);
+    height: auto;
+    max-height: calc(100dvh - var(--topbar-h) - 14px);
+    transform: none;
+    visibility: visible;
+    pointer-events: auto;
+    border-radius: 16px;
+    padding-bottom: 0;
+  }
+  .mobile-cart-fab, .cart-grabber, .cart-close-mobile, .cart-backdrop { display: none !important; }
+  .cart-head { padding: 8px 12px; }
+  .cart-head strong { font-size: 13.5px !important; }
+  .cart-summary { padding: 8px 12px 10px; }
+  .cart-summary .sum-row.total { font-size: 14px; margin-bottom: 7px !important; }
+  .cart-summary .btn { padding: 8px 10px; font-size: 12px; }
+
+  /* Sembunyikan bottom nav saat HP landscape (navigasi pakai tombol ☰ di kiri atas agar layar lega!) */
+  .mobile-bottom-nav { display: none !important; }
+  .main-area { padding-bottom: 16px !important; }
+
+  /* Modal di layar pendek (landscape) rata atas agar mudah di-scroll penuh */
+  .modal-root {
+    align-items: flex-start;
+    padding: 10px;
+  }
+  .modal-box {
+    max-height: calc(100dvh - 20px);
+    border-radius: 18px;
+    padding: 16px;
+    margin: 0 auto;
+  }
 }
 
 /* ============================================================================
