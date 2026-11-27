@@ -1722,6 +1722,24 @@
       };
 
       if (existingIdx >= 0) {
+        // Hitung selisih qty item lama vs baru agar stok selalu akurat saat edit Open Bill
+        const oldOrder = state.db.orders[existingIdx];
+        const oldQtyMap = {};
+        (oldOrder.items || []).forEach((it) => {
+          oldQtyMap[it.menu_id] = (oldQtyMap[it.menu_id] || 0) + Number(it.qty || 1);
+        });
+        const newQtyMap = {};
+        order.items.forEach((it) => {
+          newQtyMap[it.menu_id] = (newQtyMap[it.menu_id] || 0) + Number(it.qty || 1);
+        });
+        const allIds = new Set([...Object.keys(oldQtyMap), ...Object.keys(newQtyMap)]);
+        allIds.forEach((mid) => {
+          const delta = (newQtyMap[mid] || 0) - (oldQtyMap[mid] || 0);
+          if (delta !== 0) {
+            const m = state.db.menu.find((x) => x.id === mid);
+            if (m) m.stok = Math.max(0, Number(m.stok || 0) - delta);
+          }
+        });
         state.db.orders[existingIdx] = order;
       } else {
         state.db.orders.push(order);
@@ -1866,7 +1884,9 @@
     };
 
     document.getElementById('btn-print-browser').onclick = () => {
-      document.getElementById('print-receipt-area').innerHTML = receiptHTML;
+      const area = document.getElementById('print-receipt-area');
+      area.style.width = (state.db.settings?.paper_size === '80mm') ? '76mm' : '54mm';
+      area.innerHTML = receiptHTML;
       window.print();
     };
 
@@ -1968,8 +1988,21 @@
             <button type="button" class="btn btn-secondary btn-sm" data-set-table-status="${st}">${st}</button>
           `).join('')}
         </div>
+        ${hasPerm('menu') && t.status === 'Tersedia' ? `
+          <button type="button" class="btn btn-danger btn-sm btn-full" style="margin-top:4px" id="btn-table-delete">Hapus Meja Ini</button>
+        ` : ''}
       </div>
     `);
+
+    document.getElementById('btn-table-delete')?.addEventListener('click', () => {
+      if (!confirm(`Hapus ${t.nama}?`)) return;
+      state.db.tables = state.db.tables.filter((x) => x.id !== t.id);
+      API.saveLocal(state.db);
+      API.sendAction('deleteTable', { id: t.id });
+      closeModal();
+      toast(`${t.nama} dihapus.`, 'info');
+      render();
+    });
 
     document.getElementById('btn-table-new-order').onclick = () => {
       state.orderType = 'Dine-In';
@@ -2161,7 +2194,10 @@
           </div>
           <input id="tx-date" type="date" class="input" style="max-width:175px" value="${esc(state.txDate)}" />
         </div>
-        <button type="button" class="btn btn-secondary btn-sm" id="btn-export-orders">⬇ Export CSV</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-export-orders-excel">📊 Export Excel (.xls)</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-export-orders">⬇ Export CSV Rapi</button>
+        </div>
       </div>
 
       <div class="card">
@@ -2241,7 +2277,10 @@
               <div class="card-title">Pengeluaran Operasional Cafe</div>
               <div class="card-subtitle">Biji kopi, susu, listrik, gaji, kemasan, dll</div>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" id="btn-add-expense">+ Catat Pengeluaran</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-export-finance-excel">📊 Excel Laba Rugi</button>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-add-expense">+ Catat Pengeluaran</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -2641,13 +2680,20 @@
         };
       });
 
-      document.getElementById('login-form')?.addEventListener('submit', (e) => {
+      document.getElementById('login-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const u = document.getElementById('login-username').value.trim().toLowerCase();
         const p = document.getElementById('login-password').value.trim();
-        const found = (state.db.users || []).find(
+        let found = (state.db.users || []).find(
           (x) => String(x.username).toLowerCase() === u && String(x.password) === p && x.aktif !== false
         );
+        // Jika belum ketemu secara lokal namun terhubung ke Google Sheets, verifikasi ke server
+        if (!found && API.isConnected() && navigator.onLine) {
+          try {
+            const res = await API.sendAction('login', { username: u, password: p });
+            if (res && res.ok && res.user) found = res.user;
+          } catch {}
+        }
         if (!found) {
           toast('Username atau kata sandi salah, atau akun nonaktif.', 'error');
           return;
@@ -2660,14 +2706,21 @@
       });
 
       document.querySelectorAll('[data-pin-key]').forEach((b) => {
-        b.onclick = () => {
+        b.onclick = async () => {
           const k = b.dataset.pinKey;
           if (k === 'C') state.pinBuffer = '';
           else if (k === '⌫') state.pinBuffer = state.pinBuffer.slice(0, -1);
           else if (state.pinBuffer.length < 4) state.pinBuffer += k;
 
           if (state.pinBuffer.length === 4) {
-            const found = (state.db.users || []).find((x) => String(x.pin) === state.pinBuffer && x.aktif !== false);
+            const pinEntered = state.pinBuffer;
+            let found = (state.db.users || []).find((x) => String(x.pin) === pinEntered && x.aktif !== false);
+            if (!found && API.isConnected() && navigator.onLine) {
+              try {
+                const res = await API.sendAction('login', { pin: pinEntered });
+                if (res && res.ok && res.user) found = res.user;
+              } catch {}
+            }
             if (found) {
               saveSessionUser({ id: found.id, username: found.username, nama: found.nama, role: found.role });
               state.pinBuffer = '';
@@ -2754,8 +2807,11 @@
       // Update total langsung tanpa re-render penuh agar keyboard tidak hilang fokus!
       document.getElementById('cart-discount')?.addEventListener('input', (e) => {
         state.discount = Math.max(0, Number(e.target.value) || 0);
+        const totals = calcCartTotals();
         const box = document.getElementById('cart-totals-box');
-        if (box) box.innerHTML = renderCartTotalsHTML(calcCartTotals());
+        if (box) box.innerHTML = renderCartTotalsHTML(totals);
+        const fabTotal = document.querySelector('#btn-open-mobile-cart .mono');
+        if (fabTotal) fabTotal.textContent = fmtRp(totals.total);
       });
       document.getElementById('cart-note')?.addEventListener('input', (e) => { state.orderNote = e.target.value; });
 
@@ -2893,15 +2949,119 @@
           render();
         };
       });
+      const buildOrderExportData = () => {
+        const q = state.txSearch.trim().toLowerCase();
+        const filtered = (state.db.orders || []).filter((o) => {
+          if (state.txDate && String(o.tanggal).slice(0, 10) !== state.txDate) return false;
+          if (q && !(o.no_invoice.toLowerCase().includes(q) || (o.pelanggan || '').toLowerCase().includes(q))) return false;
+          return true;
+        });
+
+        const headers = [
+          'No', 'No Invoice', 'Tanggal', 'Waktu', 'Kasir', 'Pelanggan',
+          'Tipe Order', 'Meja', 'Rincian Pesanan',
+          'Subtotal (Rp)', 'Diskon (Rp)', 'Pajak (Rp)', 'Service (Rp)', 'Total (Rp)',
+          'Metode Bayar', 'Status'
+        ];
+
+        let sumSub = 0, sumDisc = 0, sumTax = 0, sumSrv = 0, sumTot = 0;
+        const rows = filtered.map((o, idx) => {
+          const itemStr = (o.items || [])
+            .map((it) => `${it.qty}x ${it.nama}${it.varian ? ' (' + it.varian + ')' : ''}`)
+            .join(', ');
+          if (o.status_bayar !== 'Dibatalkan') {
+            sumSub += Number(o.subtotal || 0);
+            sumDisc += Number(o.diskon || 0);
+            sumTax += Number(o.pajak || 0);
+            sumSrv += Number(o.service_charge || 0);
+            sumTot += Number(o.total || 0);
+          }
+          return [
+            idx + 1,
+            o.no_invoice,
+            String(o.tanggal || '').slice(0, 10),
+            o.waktu || '',
+            o.kasir || '',
+            o.pelanggan || '',
+            o.tipe_order || '',
+            o.meja || '-',
+            itemStr,
+            Number(o.subtotal || 0),
+            Number(o.diskon || 0),
+            Number(o.pajak || 0),
+            Number(o.service_charge || 0),
+            Number(o.total || 0),
+            o.metode_bayar || '',
+            o.status_bayar || ''
+          ];
+        });
+
+        const footer = [
+          '', 'TOTAL VALID (NON-VOID)', '', '', '', '', '', '', `${filtered.length} Transaksi`,
+          sumSub, sumDisc, sumTax, sumSrv, sumTot, '', ''
+        ];
+        const suffix = state.txDate || todayISO();
+        return { headers, rows, footer, suffix };
+      };
+
       document.getElementById('btn-export-orders')?.addEventListener('click', () => {
-        const rows = [['Invoice', 'Tanggal', 'Waktu', 'Kasir', 'Pelanggan', 'Tipe', 'Meja', 'Total', 'Metode', 'Status']];
-        (state.db.orders || []).forEach((o) => rows.push([o.no_invoice, o.tanggal, o.waktu, o.kasir, o.pelanggan, o.tipe_order, o.meja, o.total, o.metode_bayar, o.status_bayar]));
-        downloadCSV('CAFE-CL-Transaksi.csv', rows);
+        const { headers, rows, footer, suffix } = buildOrderExportData();
+        if (!rows.length) { toast('Tidak ada data transaksi untuk diexport.', 'error'); return; }
+        downloadCSV(`CAFE-CL-Transaksi-${suffix}.csv`, [headers, ...rows, footer]);
+        toast('CSV rapi berhasil diunduh (siap buka di Excel)!', 'success');
+      });
+
+      document.getElementById('btn-export-orders-excel')?.addEventListener('click', () => {
+        const { headers, rows, footer, suffix } = buildOrderExportData();
+        if (!rows.length) { toast('Tidak ada data transaksi untuk diexport.', 'error'); return; }
+        const cafeName = state.db.settings?.cafe_name || 'CAFE CL';
+        downloadExcel(
+          `CAFE-CL-Laporan-Transaksi-${suffix}.xls`,
+          `LAPORAN TRANSAKSI PENJUALAN — ${cafeName}`,
+          `Periode: ${state.txDate || 'Semua Tanggal'} • Dicetak: ${new Date().toLocaleString('id-ID')}`,
+          headers,
+          rows,
+          footer,
+          [9, 10, 11, 12, 13]
+        );
+        toast('File Excel (.xls) rapi berhasil diunduh!', 'success');
       });
     }
 
     // Finance events
     if (state.route === 'finance') {
+      document.getElementById('btn-export-finance-excel')?.addEventListener('click', () => {
+        const cafeName = state.db.settings?.cafe_name || 'CAFE CL';
+        const validOrders = (state.db.orders || []).filter((o) => o.status_bayar === 'Lunas');
+        const totalOmzet = validOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+        let totalHpp = 0;
+        validOrders.forEach((o) => (o.items || []).forEach((it) => { totalHpp += Number(it.hpp || 0) * Number(it.qty || 1); }));
+        const exps = state.db.expenses || [];
+        const totalExp = exps.reduce((s, e) => s + Number(e.nominal || 0), 0);
+        const netProfit = totalOmzet - totalHpp - totalExp;
+
+        const headers = ['No', 'Tanggal', 'Kategori', 'Deskripsi Pengeluaran', 'Metode', 'Dicatat Oleh', 'Nominal (Rp)'];
+        const rows = exps.map((x, idx) => [
+          idx + 1, String(x.tanggal || '').slice(0, 10), x.kategori, x.deskripsi, x.metode, x.dicatat_oleh, Number(x.nominal || 0)
+        ]);
+        rows.push(['', '', '', '', '', '', '']);
+        rows.push(['', 'RINGKASAN LABA RUGI', 'Total Omzet Lunas', `${validOrders.length} Transaksi`, '', '', totalOmzet]);
+        rows.push(['', '', 'Total HPP Bahan Baku', '', '', '', -totalHpp]);
+        rows.push(['', '', 'Total Pengeluaran Operasional', `${exps.length} Catatan`, '', '', -totalExp]);
+        const footer = ['', 'LABA BERSIH', '', '', '', '', netProfit];
+
+        downloadExcel(
+          `CAFE-CL-Laba-Rugi-${todayISO()}.xls`,
+          `LAPORAN KEUANGAN & LABA RUGI — ${cafeName}`,
+          `Dicetak: ${new Date().toLocaleString('id-ID')}`,
+          headers,
+          rows,
+          footer,
+          [6]
+        );
+        toast('Laporan Excel Laba Rugi berhasil diunduh!', 'success');
+      });
+
       document.getElementById('btn-add-expense')?.addEventListener('click', () => {
         openModal(`
           <div class="modal-head"><div class="modal-title">Catat Pengeluaran Cafe</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
@@ -3142,19 +3302,89 @@
     }
   }
 
+  // Export CSV Rapi: UTF-8 BOM + sep=; (terpisah rapi per kolom di Excel Indonesia & English)
   function downloadCSV(filename, rows) {
     const sanitizeCell = (val) => {
-      let s = String(val ?? '');
-      // Cegah CSV Formula Injection
-      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      let s = String(val ?? '').replace(/\r?\n/g, ' ').trim();
+      // Cegah CSV Formula Injection tanpa merusak angka negatif atau tanda '-'
+      if (/^[=+@\t\r]|^-(?![0-9.,]*$)/.test(s)) s = "'" + s;
       return `"${s.replace(/"/g, '""')}"`;
     };
-    const csv = rows.map((r) => r.map(sanitizeCell).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const body = rows.map((r) => r.map(sanitizeCell).join(';')).join('\r\n');
+    const content = '\uFEFFsep=;\r\n' + body;
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // Export Excel (.xls) Berformat Rapi: Header Espresso-Emas, Border, Format Rupiah & Baris Total
+  function downloadExcel(filename, title, subtitle, headers, rows, footerRow = null, currencyCols = []) {
+    const safeCell = (val) => {
+      let s = String(val ?? '');
+      if (/^[=+@\t\r]|^-(?![0-9.,]*$)/.test(s)) s = "'" + s;
+      return esc(s);
+    };
+    const isMoney = (idx) => currencyCols.includes(idx);
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8" />
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 11pt; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #C8B9A6; padding: 6px 10px; vertical-align: middle; }
+          .title { font-size: 15pt; font-weight: bold; background: #241610; color: #F4D59B; text-align: left; border: none; padding: 10px; }
+          .sub { font-size: 10pt; background: #362218; color: #E5D4C0; text-align: left; border: none; padding: 6px 10px; }
+          .th { background: #2B1A12; color: #F4D59B; font-weight: bold; text-align: center; white-space: nowrap; }
+          .even { background: #FAF6F0; }
+          .num { text-align: right; mso-number-format:"\\#\\,\\#\\#0"; white-space: nowrap; }
+          .text { mso-number-format:"\\@"; }
+          .foot { background: #EFE3D0; font-weight: bold; color: #241610; }
+        </style>
+      </head>
+      <body>
+        <table>
+          <tr><td colspan="${headers.length}" class="title">${esc(title)}</td></tr>
+          <tr><td colspan="${headers.length}" class="sub">${esc(subtitle)}</td></tr>
+          <tr>${headers.map((h) => `<th class="th">${esc(h)}</th>`).join('')}</tr>
+          ${rows.map((r, ri) => `
+            <tr class="${ri % 2 === 1 ? 'even' : ''}">
+              ${r.map((cell, ci) => {
+                if (isMoney(ci) && cell !== '' && !isNaN(Number(cell))) {
+                  return `<td class="num">${Number(cell)}</td>`;
+                }
+                return `<td class="text">${safeCell(cell)}</td>`;
+              }).join('')}
+            </tr>
+          `).join('')}
+          ${footerRow ? `
+            <tr>
+              ${footerRow.map((cell, ci) => {
+                if (isMoney(ci) && cell !== '' && !isNaN(Number(cell))) {
+                  return `<td class="foot num">${Number(cell)}</td>`;
+                }
+                return `<td class="foot">${safeCell(cell)}</td>`;
+              }).join('')}
+            </tr>
+          ` : ''}
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 

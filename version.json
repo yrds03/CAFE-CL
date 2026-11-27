@@ -1,6 +1,6 @@
 {
-  "version": "1.0.2",
-  "build": "20261127-1145",
-  "releasedAt": "2026-11-27T04:45:43.818Z",
-  "notes": "Update v1.0.2: Pindah & Migrasi Google Sheet Klien 1-Klik langsung dari aplikasi, auto-generate 10 sheet, salin Code.gs khusus klien, dan Link Setup Kasir"
+  "version": "1.0.3",
+  "build": "20261127-1154",
+  "releasedAt": "2026-11-27T04:54:12.572Z",
+  "notes": "Update v1.0.3: Perbaikan Export CSV Rapi (UTF-8 BOM + sep=; per kolom) + Export Excel (.xls) berformat lengkap, Laba Rugi Excel, dan penyempurnaan akhir"
 }

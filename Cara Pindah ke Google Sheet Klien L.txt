@@ -1,0 +1,20 @@
+Cara Pindah ke Google Sheet Klien Langsung dari Aplikasi (1-Klik & Serba Otomatis!)
+
+Masuk sebagai Owner → buka menu Pengaturan → klik 🔄 Pindah / Hubungkan Sheet Klien (app.js, api.js, Code.gs):
+
+Opsi 1 — Cara Super Cepat (5 Detik, Tanpa Sentuh Apps Script Lagi!)
+Buat Google Sheet kosong di akun Google klien, lalu Share sebagai Editor ke akun Google Anda (pemilik Apps Script).
+Di aplikasi CAFE CL (Pengaturan → 🔄 Pindah / Hubungkan Sheet Klien):
+Copas langsung link penuh Google Sheet klien (https://docs.google.com/spreadsheets/d/.../edit) → aplikasi otomatis mengekstrak ID Sheet-nya!
+Endpoint Web App /exec tetap pakai milik Anda (sudah terisi).
+Pilih mode data awal:
+Sheet Baru + Data Contoh Default Cafe, atau
+Sheet Baru + Pindahkan Menu, Meja, Role & Pengaturan saat ini ke Sheet Klien.
+Klik ✨ Hubungkan & Generate Otomatis → selesai! Seluruh 10 sheet + header berwarna langsung terbentuk otomatis di Google Sheet klien, data lama dibersihkan agar tidak tercampur antar-cafe, dan aplikasi langsung tersinkron penuh ke Sheet klien!
+Opsi 2 — Pindah Penuh ke Akun Google Milik Klien Sendiri
+Copas Link Google Sheet klien ke kolom #1 di modal tersebut.
+Klik 📋 Salin Code.gs Khusus Sheet Klien (atau ⬇ Download Code.gs) → kode Code.gs otomatis sudah terisi ID Google Sheet klien, tinggal tempel & Deploy Web App di akun Google klien.
+Copas URL /exec klien ke kolom #2 → klik ✨ Hubungkan & Generate Otomatis.
+Bonus — 📲 Salin Link Setup Kasir Klien
+Setelah Google Sheet klien terhubung, Owner cukup klik 📲 Salin Link Setup Kasir Klien di Pengaturan, lalu buka link tersebut di PC / HP kasir milik klien.
+Perangkat kasir klien langsung terkonfigurasi otomatis ke Google Sheet klien, lalu parameter ?setup=... langsung dihapus otomatis dari address bar demi keamanan!
