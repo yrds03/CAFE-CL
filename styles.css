@@ -78,15 +78,31 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html, body {
-  height: 100%;
+html {
+  background: var(--bg-canvas);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100dvh;
   background: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   -webkit-font-smoothing: antialiased;
+}
+
+body.scroll-locked {
+  overflow: hidden;
+  touch-action: none;
+}
+
+button, a, select, input, textarea {
+  touch-action: manipulation;
 }
 
 /* Custom Sleek Scrollbar */
@@ -254,7 +270,7 @@ html, body {
   display: grid;
   grid-template-columns: 1.12fr 1fr;
   position: relative;
-  overflow: hidden;
+  overflow-x: clip;
   background:
     radial-gradient(circle at 12% 18%, rgba(216, 167, 91, 0.16), transparent 45%),
     radial-gradient(circle at 86% 82%, rgba(164, 102, 42, 0.15), transparent 48%),
@@ -813,8 +829,11 @@ html, body {
 
 .sidebar-nav {
   flex: 1;
+  min-height: 0;
   padding: 14px 12px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1551,9 +1570,13 @@ html, body {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
 }
 .data-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1587,19 +1610,25 @@ html, body {
   padding: 16px;
   background: rgba(6, 4, 3, 0.72);
   backdrop-filter: blur(8px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .modal-root.open { display: flex; }
 .modal-box {
   width: 100%;
   max-width: 520px;
-  max-height: 90dvh;
+  max-height: 88dvh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   padding: 24px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
   animation: modalPop 0.22s cubic-bezier(.22, 1, .36, 1);
+  margin: auto;
 }
 @keyframes modalPop {
   from { opacity: 0; transform: scale(0.94) translateY(10px); }
@@ -1685,6 +1714,9 @@ html, body {
 .mobile-bottom-nav { display: none; }
 .mobile-cart-fab { display: none; }
 .sidebar-backdrop { display: none; }
+.cart-backdrop { display: none; }
+.cart-grabber { display: none; }
+.cart-close-mobile { display: none; }
 
 .empty-state {
   text-align: center;
@@ -1697,22 +1729,15 @@ html, body {
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 
 /* ============================================================================
- * 9. RESPONSIVE BREAKPOINTS (TABLET & MOBILE HP)
+ * 9. RESPONSIVE BREAKPOINTS (TABLET & MOBILE HP — NATIVE SMOOTH SCROLL & UX)
  * ============================================================================ */
-@media (max-width: 1100px) {
-  .pos-layout { grid-template-columns: minmax(0, 1fr) 340px; }
-  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dash-grid { grid-template-columns: 1fr; }
-}
 
-@media (max-width: 960px) {
-  .login-page { grid-template-columns: 1fr; }
-  .login-hero { display: none; }
-  .login-mobile-brand { display: flex; }
-
+/* TABLET LANDSCAPE & PORTRAIT (769px – 1180px): Sidebar jadi drawer, POS tetap split lega! */
+@media (max-width: 1180px) {
   .sidebar {
     transform: translateX(-100%);
     box-shadow: 20px 0 60px rgba(0, 0, 0, 0.65);
+    -webkit-overflow-scrolling: touch;
   }
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop.open {
@@ -1723,16 +1748,126 @@ html, body {
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
   }
-  .main-area { margin-left: 0; padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 12px); }
+  .main-area {
+    margin-left: 0;
+    width: 100%;
+  }
   .mobile-menu-btn { display: inline-flex; }
-  .topbar { padding: 0 14px; }
-  .content-body { padding: 16px 14px 26px; }
-  .sync-pill .sync-text { display: none; }
-  .bt-pill .bt-label-full { display: none; }
-  .bt-pill { padding: 7px 10px; }
+  .topbar { padding: 0 18px; }
+  .content-body { padding: 18px 18px 34px; }
 
-  /* Mobile POS Cart as Slide-up Drawer */
-  .pos-layout { grid-template-columns: 1fr; }
+  .pos-layout { grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-grid { grid-template-columns: 1fr; }
+}
+
+/* TABLET PORTRAIT KECIL & LOGIN SINGLE-COLUMN (<= 920px) */
+@media (max-width: 920px) {
+  .login-page {
+    display: block;
+    min-height: 100dvh;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(34px, env(safe-area-inset-bottom));
+  }
+  .login-hero { display: none; }
+  .login-mobile-brand { display: flex; }
+  .login-panel {
+    display: block;
+    padding: 0;
+    overflow: visible;
+  }
+  .login-box {
+    margin: 0 auto;
+    max-width: 460px;
+  }
+}
+
+/* MOBILE HP & TABLET KECIL (<= 768px): Bottom Nav + Slide-Up Cart Sheet + Smooth Scroll */
+@media (max-width: 768px) {
+  :root {
+    --topbar-h: 58px;
+    --bottomnav-h: 64px;
+  }
+
+  .topbar {
+    height: auto;
+    min-height: var(--topbar-h);
+    padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+    gap: 8px;
+  }
+  .topbar-left { gap: 8px; }
+  .page-title { font-size: 17px; }
+  .topbar-right { gap: 6px; flex-shrink: 0; }
+  .sync-pill { padding: 6px 9px; }
+  .sync-pill .sync-text { display: none; }
+  .bt-pill { padding: 6px 9px; font-size: 11px; gap: 5px; }
+  .bt-pill .bt-label-full { display: none; }
+  .btn-icon { width: 36px; height: 36px; }
+
+  /* Cegah iOS Safari auto-zoom saat ketuk input */
+  .input, .select, .textarea {
+    font-size: 16px;
+    padding: 11px 13px;
+  }
+  .cart-meta-inputs .input, .cart-meta-inputs .select {
+    font-size: 14px;
+    padding: 9px 10px;
+  }
+
+  .main-area {
+    padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 18px);
+  }
+  .content-body {
+    padding: 14px 12px 24px;
+  }
+  .card {
+    padding: 15px;
+    border-radius: 18px;
+  }
+  .card-header {
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  /* POS Mobile: ruang ekstra di bawah agar menu terakhir tidak tertutup Cart Bar */
+  .pos-layout {
+    grid-template-columns: 1fr;
+    padding-bottom: 84px;
+  }
+  .cat-pills {
+    padding-bottom: 6px;
+    margin-bottom: 12px;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+  .cat-pill { padding: 8px 14px; font-size: 12.5px; }
+  .menu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .menu-thumb { height: 100px; }
+  .menu-body { padding: 10px 11px 11px; }
+  .menu-name { font-size: 13px; }
+  .menu-price { font-size: 13px; }
+
+  /* Mobile Cart Drawer dengan Backdrop + Handle + Smooth Internal Scroll */
+  .cart-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 115;
+    background: rgba(6, 4, 3, 0.68);
+    backdrop-filter: blur(5px);
+  }
+  .cart-grabber {
+    display: block;
+    width: 42px;
+    height: 4px;
+    border-radius: 99px;
+    background: var(--border-strong);
+    margin: 9px auto 2px;
+    flex-shrink: 0;
+  }
+  .cart-close-mobile { display: inline-flex; }
   .cart-panel {
     position: fixed;
     left: 0;
@@ -1740,33 +1875,57 @@ html, body {
     bottom: 0;
     top: auto;
     z-index: 120;
+    height: 86dvh;
     max-height: 86dvh;
     border-radius: 24px 24px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
     transform: translateY(105%);
-    transition: transform 0.28s cubic-bezier(.22, 1, .36, 1);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform 0.28s cubic-bezier(.22, 1, .36, 1), visibility 0.28s;
   }
-  .cart-panel.mobile-open { transform: translateY(0); }
+  .cart-panel.mobile-open {
+    transform: translateY(0);
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .cart-head { padding: 10px 16px 12px; }
+  .cart-items {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .cart-summary {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    flex-shrink: 0;
+  }
+
+  /* Full-width Docked Floating Cart Bar (ergonomis jempol HP!) */
   .mobile-cart-fab {
     display: flex;
     position: fixed;
-    right: 16px;
-    bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 14px);
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + 10px);
     z-index: 50;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
     padding: 13px 18px;
-    border-radius: 99px;
-    border: none;
-    background: linear-gradient(135deg, #EFCF94, #B88035);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 243, 215, 0.35);
+    background: linear-gradient(135deg, #F0CB85, #BA8236);
     color: #160E0A;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 800;
-    box-shadow: 0 12px 30px rgba(216, 167, 91, 0.45);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45), 0 6px 20px rgba(216, 167, 91, 0.35);
     cursor: pointer;
   }
 
-  /* Bottom Navigation Bar on Mobile HP */
+  /* Bottom Navigation Bar HP */
   .mobile-bottom-nav {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -1797,19 +1956,50 @@ html, body {
     position: relative;
   }
   .bnav-btn.active { color: var(--gold-400); }
+
+  /* Floor Plan, Charts & Modals di HP */
+  .floor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .table-tile { padding: 14px; border-radius: 16px; }
+  .bar-chart { height: 170px; gap: 7px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi-card { padding: 14px; border-radius: 16px; }
+  .kpi-value { font-size: 17px; }
+  .kpi-ico { width: 32px; height: 32px; }
+
+  .modal-root {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-box {
+    max-width: 100%;
+    max-height: 90dvh;
+    border-radius: 24px 24px 0 0;
+    padding: 20px 16px calc(22px + env(safe-area-inset-bottom));
+    margin: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+  }
+  .toast-root {
+    top: max(12px, env(safe-area-inset-top));
+    left: 12px;
+    right: 12px;
+  }
+  .toast {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
 }
 
-@media (max-width: 560px) {
-  .page-title { font-size: 16px; }
-  .topbar-right { gap: 5px; flex-shrink: 0; }
+@media (max-width: 520px) {
+  .page-title { font-size: 15.5px; }
   .btn-icon { width: 34px; height: 34px; }
-  .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
-  .kpi-value { font-size: 17px; }
-  .menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .menu-thumb { height: 96px; }
   .download-grid { grid-template-columns: 1fr; }
   .grid-2, .grid-3, .perm-grid { grid-template-columns: 1fr; }
-  .login-card { padding: 22px 18px; }
+  .login-card { padding: 20px 16px; }
+  .modal-actions { flex-wrap: wrap; }
+  .modal-actions .btn { flex: 1; }
 }
 
 /* ============================================================================

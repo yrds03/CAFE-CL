@@ -148,12 +148,19 @@
   // ==========================================================================
   // MODAL ENGINE (BULLETPROOF CLOSE VIA X, BATAL, BACKDROP & ESCAPE KEY)
   // ==========================================================================
+  function syncBodyScrollLock() {
+    const modalOpen = Boolean(document.getElementById('modal-root')?.classList.contains('open'));
+    const locked = modalOpen || state.sidebarOpen || state.mobileCartOpen;
+    document.body.classList.toggle('scroll-locked', locked);
+  }
+
   function openModal(html) {
     const root = document.getElementById('modal-root');
     if (!root) return;
     root.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true">${html}</div>`;
     root.classList.add('open');
     root.setAttribute('aria-hidden', 'false');
+    syncBodyScrollLock();
 
     // Event delegation: klik backdrop ATAU tombol [data-close-modal] apa pun langsung menutup modal!
     root.onclick = (e) => {
@@ -171,6 +178,7 @@
     root.setAttribute('aria-hidden', 'true');
     root.innerHTML = '';
     root.onclick = null;
+    syncBodyScrollLock();
   }
 
   document.addEventListener('keydown', (e) => {
@@ -764,6 +772,7 @@
     state.route = route;
     state.sidebarOpen = false;
     state.mobileCartOpen = false;
+    window.scrollTo({ top: 0, behavior: 'instant' });
     render();
   }
 
@@ -1378,8 +1387,10 @@
           </div>
         </div>
 
-        <!-- ORDER CART PANEL (PC STICKY / MOBILE DRAWER) -->
+        <!-- ORDER CART PANEL (PC & TABLET STICKY / MOBILE SLIDE-UP SHEET) -->
+        <div class="cart-backdrop ${state.mobileCartOpen ? 'open' : ''}" id="cart-backdrop"></div>
         <aside class="cart-panel ${state.mobileCartOpen ? 'mobile-open' : ''}">
+          <div class="cart-grabber"></div>
           <div class="cart-head">
             <div>
               <strong style="font-size:15px">Keranjang Kasir</strong>
@@ -1387,7 +1398,7 @@
             </div>
             <div style="display:flex;gap:6px">
               ${state.cart.length ? `<button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-clear-cart">Hapus</button>` : ''}
-              <button type="button" class="btn btn-secondary btn-icon mobile-menu-btn" id="btn-close-mobile-cart">✕</button>
+              <button type="button" class="btn btn-secondary btn-icon cart-close-mobile" id="btn-close-mobile-cart" aria-label="Tutup Keranjang">✕</button>
             </div>
           </div>
 
@@ -1460,8 +1471,8 @@
         </aside>
 
         <button type="button" class="mobile-cart-fab" id="btn-open-mobile-cart">
-          <span>🛒 ${cartCount} Item</span>
-          <span class="mono">${fmtRp(totals.total)}</span>
+          <span>🛒 ${cartCount} Item • Lihat Keranjang</span>
+          <span class="mono">${fmtRp(totals.total)} →</span>
         </button>
       </div>
     `;
@@ -2833,6 +2844,7 @@
       document.getElementById('btn-checkout')?.addEventListener('click', () => openCheckoutModal(false));
       document.getElementById('btn-open-mobile-cart')?.addEventListener('click', () => { state.mobileCartOpen = true; render(); });
       document.getElementById('btn-close-mobile-cart')?.addEventListener('click', () => { state.mobileCartOpen = false; render(); });
+      document.getElementById('cart-backdrop')?.addEventListener('click', () => { state.mobileCartOpen = false; render(); });
     }
 
     // Tables events
@@ -3396,6 +3408,7 @@
     if (!app) return;
     app.innerHTML = state.user ? renderAppShell() : renderLogin();
     bindEvents();
+    syncBodyScrollLock();
   }
 
   async function bootstrap() {
