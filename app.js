@@ -1,11 +1,12 @@
 /* ============================================================================
- * CAFE CL — Complete Cafe POS, Barista KDS, Floor Plan, Finance & Auto-Update PWA
+ * CAFE CL — Cashier-Focused POS, Bluetooth Thermal Printer, RBAC & Auto-Update PWA
  * ============================================================================ */
 (() => {
   'use strict';
 
   const CFG = window.CAFE_CONFIG;
   const API = window.CafeAPI;
+  const Printer = window.CafePrinter;
 
   // ==========================================================================
   // APPLICATION STATE
@@ -13,13 +14,18 @@
   const state = {
     db: API.loadLocal(),
     user: loadSessionUser(),
-    route: 'dashboard',
+    route: 'pos',
     theme: localStorage.getItem('cafe_cl_theme') || 'dark',
     syncing: false,
+    submittingOrder: false,
     deferredPrompt: null,
     isStandalone: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
     updateInProgress: false,
     swReg: null,
+
+    // Bluetooth Thermal Printer status
+    btConnected: Printer ? Printer.isConnected() : false,
+    btName: Printer ? Printer.getDeviceName() : '',
 
     // Login UI state
     loginMode: 'password', // 'password' | 'pin'
@@ -59,7 +65,32 @@
   }
 
   // ==========================================================================
-  // HELPERS & FORMATTERS
+  // ROLE-BASED ACCESS CONTROL (RBAC SECURITY)
+  // ==========================================================================
+  function getUserRoleObj() {
+    if (!state.user) return null;
+    const roles = state.db.roles || CFG.DEFAULT_ROLES;
+    const found = roles.find((r) => String(r.nama).toLowerCase() === String(state.user.role).toLowerCase());
+    if (found) return found;
+    // Fallback aman jika role dihapus: akses kasir dasar saja
+    return { nama: state.user.role, akses: ['dashboard', 'pos', 'tables', 'history'] };
+  }
+
+  function hasPerm(permKey) {
+    if (!state.user) return false;
+    const roleObj = getUserRoleObj();
+    if (!roleObj) return false;
+    if (String(roleObj.nama).toLowerCase() === 'owner') return true;
+    return Array.isArray(roleObj.akses) && roleObj.akses.includes(permKey);
+  }
+
+  function getFirstAllowedRoute() {
+    const order = ['dashboard', 'pos', 'tables', 'history', 'menu', 'finance', 'members', 'settings'];
+    return order.find((r) => hasPerm(r)) || 'pos';
+  }
+
+  // ==========================================================================
+  // HELPERS & SECURITY SANITIZERS
   // ==========================================================================
   const fmtRp = (n) => {
     const cur = state.db.settings?.currency || 'Rp';
@@ -73,10 +104,7 @@
     return tz.toISOString().slice(0, 10);
   };
 
-  const nowTime = () => {
-    const d = new Date();
-    return d.toTimeString().slice(0, 8);
-  };
+  const nowTime = () => new Date().toTimeString().slice(0, 8);
 
   const esc = (s) => String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -85,17 +113,20 @@
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-  const categoryIcon = (cat) => {
-    const map = {
-      'Signature': '☕',
-      'Espresso': '🥃',
-      'Non-Coffee': '🍵',
-      'Tea': '🫖',
-      'Pastry': '🥐',
-      'Food': '🍝'
-    };
-    return map[cat] || '✨';
+  const safeUrl = (u) => {
+    const str = String(u || '').trim();
+    if (!str) return '';
+    return /^https?:\/\//i.test(str) ? str : '';
   };
+
+  const categoryIcon = (cat) => ({
+    'Signature': '☕',
+    'Espresso': '🥃',
+    'Non-Coffee': '🍵',
+    'Tea': '🫖',
+    'Pastry': '🥐',
+    'Food': '🍝'
+  })[cat] || '✨';
 
   function toast(msg, type = 'info') {
     const root = document.getElementById('toast-root');
@@ -103,7 +134,8 @@
     const el = document.createElement('div');
     el.className = `toast ${type}`;
     const dot = type === 'success' ? '✓' : type === 'error' ? '!' : '✦';
-    el.innerHTML = `<span style="color:${type === 'success' ? 'var(--success)' : type === 'error' ? 'var(--danger)' : 'var(--gold-400)'};font-weight:800">${dot}</span><span>${esc(msg)}</span>`;
+    const color = type === 'success' ? 'var(--success)' : type === 'error' ? 'var(--danger)' : 'var(--gold-400)';
+    el.innerHTML = `<span style="color:${color};font-weight:800">${dot}</span><span>${esc(msg)}</span>`;
     root.appendChild(el);
     setTimeout(() => {
       el.style.opacity = '0';
@@ -113,22 +145,40 @@
     }, 3200);
   }
 
+  // ==========================================================================
+  // MODAL ENGINE (BULLETPROOF CLOSE VIA X, BATAL, BACKDROP & ESCAPE KEY)
+  // ==========================================================================
   function openModal(html) {
     const root = document.getElementById('modal-root');
-    root.innerHTML = `<div class="modal-box">${html}</div>`;
+    if (!root) return;
+    root.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true">${html}</div>`;
     root.classList.add('open');
     root.setAttribute('aria-hidden', 'false');
+
+    // Event delegation: klik backdrop ATAU tombol [data-close-modal] apa pun langsung menutup modal!
     root.onclick = (e) => {
-      if (e.target === root) closeModal();
+      if (e.target === root || e.target.closest('[data-close-modal]')) {
+        e.preventDefault();
+        closeModal();
+      }
     };
   }
 
   function closeModal() {
     const root = document.getElementById('modal-root');
+    if (!root) return;
     root.classList.remove('open');
     root.setAttribute('aria-hidden', 'true');
     root.innerHTML = '';
+    root.onclick = null;
   }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const root = document.getElementById('modal-root');
+      if (root && root.classList.contains('open')) closeModal();
+    }
+  });
 
   // ==========================================================================
   // AUTO-UPDATE ENGINE & STARTUP SPINNING LOADER
@@ -145,14 +195,14 @@
     ov.classList.toggle('active', Boolean(visible));
   }
 
-  async function triggerSeamlessUpdate(newVersionLabel, newBuildKey) {
+  async function triggerSeamlessUpdate(newVersionLabel, newBuildKey, notesText) {
     if (state.updateInProgress) return;
     state.updateInProgress = true;
 
     setOverlay(
       true,
       'Update Sistem Ditemukan!',
-      'Sedang memperbarui aplikasi & cache ke versi terbaru secara otomatis...',
+      notesText || 'Mengunduh & menerapkan versi terbaru secara otomatis...',
       45,
       newVersionLabel || `v${CFG.APP_VERSION}`
     );
@@ -166,54 +216,42 @@
 
       if (state.swReg) {
         await state.swReg.update().catch(() => {});
-        if (state.swReg.waiting) {
-          state.swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
+        if (state.swReg.waiting) state.swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
       }
-      if (newBuildKey) {
-        localStorage.setItem(BUILD_KEY, newBuildKey);
-      }
-      setOverlay(true, 'Pembaruan Selesai!', 'Memuat ulang aplikasi dengan tampilan terbaru...', 100, newVersionLabel);
+      if (newBuildKey) localStorage.setItem(BUILD_KEY, newBuildKey);
+      setOverlay(true, 'Pembaruan Selesai!', 'Memuat ulang aplikasi dengan versi terbaru...', 100, newVersionLabel);
     } catch (e) {
       console.warn('Auto update warning:', e);
     }
 
-    setTimeout(() => {
-      window.location.reload();
-    }, 950);
+    setTimeout(() => window.location.reload(), 900);
   }
 
   async function checkRemoteVersion(isStartup = false) {
     const localBuild = `${CFG.APP_VERSION}-${CFG.APP_BUILD}`;
-    const savedBuild = localStorage.getItem(BUILD_KEY);
-    if (!savedBuild) localStorage.setItem(BUILD_KEY, localBuild);
+    if (!localStorage.getItem(BUILD_KEY)) localStorage.setItem(BUILD_KEY, localBuild);
 
     if (isStartup) {
-      setOverlay(true, 'Memeriksa Pembaruan Terbaru...', 'Menghubungkan ke server CAFE CL & Service Worker', 35, `v${CFG.APP_VERSION}`);
+      setOverlay(true, 'Memeriksa Pembaruan Terbaru...', 'Menghubungkan ke server CAFE CL & Service Worker', 38, `v${CFG.APP_VERSION}`);
     }
 
     let remote = null;
     try {
       const res = await fetch(`./version.json?t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) remote = await res.json();
-    } catch (e) {
-      // Offline mode: lanjutkan dari cache lokal
-    }
+    } catch (e) {}
 
     if (remote && remote.version && remote.build) {
       const remoteBuild = `${remote.version}-${remote.build}`;
-      const currentRunning = localBuild;
-
-      // Jika versi server berbeda dengan kode yang sedang berjalan -> auto-update berputar!
-      if (remoteBuild !== currentRunning) {
-        await triggerSeamlessUpdate(`v${remote.version} • ${remote.build}`, remoteBuild);
+      if (remoteBuild !== localBuild) {
+        await triggerSeamlessUpdate(`v${remote.version} • ${remote.build}`, remoteBuild, remote.notes);
         return true;
       }
       localStorage.setItem(BUILD_KEY, remoteBuild);
     }
 
     if (isStartup) {
-      setOverlay(true, 'Aplikasi Versi Terbaru Siap', 'Memuat ruang kerja CAFE CL...', 100, `v${CFG.APP_VERSION} • Up to date`);
+      setOverlay(true, 'Aplikasi Versi Terbaru Siap', 'Memuat sistem kasir CAFE CL...', 100, `v${CFG.APP_VERSION} • Up to date`);
       setTimeout(() => {
         if (!state.updateInProgress) setOverlay(false);
       }, 650);
@@ -222,7 +260,6 @@
   }
 
   async function initServiceWorkerAndUpdater() {
-    // Capture PWA Install Prompt (PC & Android)
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       state.deferredPrompt = e;
@@ -236,15 +273,13 @@
       render();
     });
 
-    // Register Service Worker
     if ('serviceWorker' in navigator) {
       try {
         const reg = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
         state.swReg = reg;
 
-        // Jika sudah ada SW baru menunggu -> aktifkan langsung
         if (reg.waiting) {
-          triggerSeamlessUpdate(`v${CFG.APP_VERSION} (Update)`);
+          triggerSeamlessUpdate(`Versi Terbaru`);
           return;
         }
 
@@ -280,10 +315,8 @@
       }
     }
 
-    // Cek versi saat startup (dengan animasi muter!)
     await checkRemoteVersion(true);
 
-    // Pengecekan berkala di latar belakang + saat tab kembali aktif
     setInterval(() => {
       if (navigator.onLine && !state.updateInProgress) {
         state.swReg?.update().catch(() => {});
@@ -300,18 +333,151 @@
   }
 
   async function manualCheckUpdate() {
-    setOverlay(true, 'Memeriksa Pembaruan...', 'Menghubungi server & Service Worker terbaru', 40, `v${CFG.APP_VERSION}`);
+    setOverlay(true, 'Memeriksa Pembaruan...', 'Menghubungi server & Service Worker terbaru', 42, `v${CFG.APP_VERSION}`);
     try {
       if (state.swReg) await state.swReg.update();
       const updated = await checkRemoteVersion(false);
       if (!updated) {
         setOverlay(true, 'Sudah Versi Terbaru!', 'Aplikasi Anda sudah menggunakan rilis terkini.', 100, `v${CFG.APP_VERSION}`);
-        setTimeout(() => setOverlay(false), 950);
+        setTimeout(() => setOverlay(false), 900);
       }
     } catch {
       setOverlay(false);
       toast('Tidak dapat memeriksa update (periksa koneksi internet).', 'error');
     }
+  }
+
+  // ==========================================================================
+  // BLUETOOTH THERMAL PRINTER MODAL & ACTIONS
+  // ==========================================================================
+  if (Printer) {
+    Printer.onStatusChange((info) => {
+      const wasConnected = state.btConnected;
+      state.btConnected = info.connected;
+      state.btName = info.name;
+      if (wasConnected && !info.connected) {
+        toast('Printer Bluetooth terputus!', 'error');
+      }
+      render();
+    });
+  }
+
+  function openBluetoothModal() {
+    const s = state.db.settings || CFG.DEFAULT_SETTINGS;
+    const supported = Printer && Printer.isSupported();
+    const connected = state.btConnected;
+    const lastBt = localStorage.getItem('cafe_cl_last_bt_name') || '';
+
+    openModal(`
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Printer Thermal Bluetooth</div>
+          <div style="font-size:12px;color:var(--text-secondary)">ESC/POS 58mm & 80mm untuk cetak struk kasir</div>
+        </div>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
+      </div>
+
+      <div class="card" style="background:var(--bg-elevated);margin-bottom:14px;border-color:${connected ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.45)'}">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="width:13px;height:13px;border-radius:50%;background:${connected ? '#22C55E' : '#EF4444'};box-shadow:0 0 12px ${connected ? '#22C55E' : '#EF4444'}"></span>
+            <div>
+              <strong style="font-size:14px">${connected ? esc(state.btName || 'Thermal Printer') : 'Belum Terhubung'}</strong>
+              <div style="font-size:11.5px;color:var(--text-secondary)">${connected ? 'Status: HIJAU — Siap mencetak struk thermal' : 'Status: MERAH — Nyalakan printer lalu klik Hubungkan'}</div>
+            </div>
+          </div>
+          <span class="badge ${connected ? 'badge-success' : 'badge-danger'}">${connected ? 'Terhubung' : 'Offline'}</span>
+        </div>
+        ${!connected && lastBt ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">Printer terakhir: ${esc(lastBt)}</div>` : ''}
+      </div>
+
+      ${!supported ? `
+        <div class="card" style="background:var(--danger-bg);border-color:rgba(248,113,113,0.4);font-size:12.5px;margin-bottom:14px">
+          Browser ini tidak mendukung Web Bluetooth. Gunakan <strong>Google Chrome / Microsoft Edge</strong> di Android, Windows, atau macOS untuk cetak Bluetooth langsung. (Untuk iPhone/Safari gunakan tombol Cetak Browser/AirPrint).
+        </div>
+      ` : ''}
+
+      <div class="grid-2" style="margin-bottom:14px">
+        <div class="field" style="margin-bottom:0">
+          <label>Ukuran Kertas Thermal</label>
+          <select id="bt-paper-size" class="select">
+            <option value="58mm" ${(s.paper_size || '58mm') === '58mm' ? 'selected' : ''}>58mm (32 karakter)</option>
+            <option value="80mm" ${s.paper_size === '80mm' ? 'selected' : ''}>80mm (48 karakter)</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0;display:flex;align-items:flex-end">
+          <label class="perm-item" style="width:100%;margin:0">
+            <input type="checkbox" id="bt-auto-print" ${s.auto_print_bt ? 'checked' : ''} />
+            <span>Auto-Print saat Bayar</span>
+          </label>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px">
+        ${!connected ? `
+          <button type="button" class="btn btn-primary btn-lg btn-full" id="btn-bt-connect" ${!supported ? 'disabled' : ''}>
+            🔵 Cari & Hubungkan Printer Bluetooth
+          </button>
+        ` : `
+          <div class="grid-2">
+            <button type="button" class="btn btn-primary" id="btn-bt-test">🖨 Test Print Struk</button>
+            <button type="button" class="btn btn-danger" id="btn-bt-disconnect">Putuskan Koneksi</button>
+          </div>
+        `}
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-close-modal>Tutup</button>
+      </div>
+    `);
+
+    const saveBtPrefs = () => {
+      const paper = document.getElementById('bt-paper-size')?.value || '58mm';
+      const autoP = Boolean(document.getElementById('bt-auto-print')?.checked);
+      state.db.settings.paper_size = paper;
+      state.db.settings.auto_print_bt = autoP;
+      API.saveLocal(state.db);
+      API.sendAction('saveSettings', state.db.settings);
+    };
+
+    document.getElementById('bt-paper-size')?.addEventListener('change', () => { saveBtPrefs(); toast('Ukuran kertas disimpan.', 'success'); });
+    document.getElementById('bt-auto-print')?.addEventListener('change', () => { saveBtPrefs(); toast('Pengaturan auto-print disimpan.', 'success'); });
+
+    document.getElementById('btn-bt-connect')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-bt-connect');
+      btn.disabled = true;
+      btn.textContent = 'Mencari Printer Bluetooth...';
+      try {
+        const res = await Printer.connect();
+        state.btConnected = true;
+        state.btName = res.name;
+        toast(`Printer ${res.name} terhubung (HIJAU)!`, 'success');
+        closeModal();
+        render();
+      } catch (err) {
+        if (!String(err.message || '').toLowerCase().includes('cancel')) {
+          toast('Gagal konek BT: ' + err.message, 'error');
+        }
+        btn.disabled = false;
+        btn.textContent = '🔵 Cari & Hubungkan Printer Bluetooth';
+      }
+    });
+
+    document.getElementById('btn-bt-test')?.addEventListener('click', async () => {
+      try {
+        await Printer.printTest(state.db.settings);
+        toast('Test print berhasil dikirim ke printer!', 'success');
+      } catch (err) {
+        toast('Gagal test print: ' + err.message, 'error');
+      }
+    });
+
+    document.getElementById('btn-bt-disconnect')?.addEventListener('click', () => {
+      Printer.disconnect();
+      toast('Printer Bluetooth diputuskan.', 'info');
+      closeModal();
+      render();
+    });
   }
 
   // ==========================================================================
@@ -339,27 +505,27 @@
       openModal(`
         <div class="modal-head">
           <div class="modal-title">Download CAFE CL untuk PC</div>
-          <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+          <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
-        <p class="text-muted" style="margin-bottom:14px">Install CAFE CL sebagai aplikasi Desktop di Windows / macOS agar bisa dibuka langsung dari Start Menu atau Desktop tanpa browser bar:</p>
+        <p class="text-muted" style="margin-bottom:14px">Install CAFE CL sebagai aplikasi Desktop di Windows / macOS agar bisa dibuka langsung dari Start Menu atau Desktop:</p>
         <div class="card" style="background:var(--bg-elevated);margin-bottom:14px">
           <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
             <div><strong class="text-gold">1. Chrome / Edge di PC:</strong> Klik ikon <strong>Install (⊕ / monitor ↓)</strong> di ujung kanan address bar browser.</div>
-            <div><strong class="text-gold">2. Atau via Menu Browser:</strong> Klik menu <strong>⋮ (kanan atas)</strong> → pilih <strong>Cast, save, and share</strong> → <strong>Install CAFE CL</strong>.</div>
-            <div><strong class="text-gold">3. Selesai!</strong> Shortcut CAFE CL langsung muncul di Desktop PC Anda & mendukung Auto-Update otomatis.</div>
+            <div><strong class="text-gold">2. Atau via Menu Browser:</strong> Klik menu <strong>⋮ (kanan atas)</strong> → <strong>Cast, save, and share</strong> → <strong>Install CAFE CL</strong>.</div>
+            <div><strong class="text-gold">3. Selesai!</strong> Aplikasi langsung siap dipakai & mendukung Auto-Update otomatis.</div>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" data-close-modal>Mengerti</button>
+          <button type="button" class="btn btn-primary" data-close-modal>Mengerti</button>
         </div>
       `);
     } else {
       openModal(`
         <div class="modal-head">
           <div class="modal-title">Download CAFE CL untuk HP</div>
-          <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+          <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
-        <p class="text-muted" style="margin-bottom:14px">Pasang CAFE CL di Layar Utama HP (Android / iPhone) seperti aplikasi native & otomatis update saat ada perbaikan:</p>
+        <p class="text-muted" style="margin-bottom:14px">Pasang CAFE CL di Layar Utama HP (Android / iPhone) seperti aplikasi native & otomatis update:</p>
         <div class="card" style="background:var(--bg-elevated);margin-bottom:12px">
           <div style="font-weight:700;color:var(--gold-400);margin-bottom:6px">Android (Chrome / Edge)</div>
           <div style="font-size:13px;color:var(--text-secondary)">
@@ -374,23 +540,23 @@
           <div style="font-size:13px;color:var(--text-secondary)">
             1. Buka halaman ini menggunakan <strong>Safari</strong>.<br/>
             2. Tap ikon <strong>Bagikan (↑ kotak panah atas)</strong> di bagian bawah.<br/>
-            3. Gulir ke bawah lalu tap <strong>"Tambahkan ke Layar Utama" (Add to Home Screen)</strong>.<br/>
-            4. Tap <strong>Tambah</strong> di pojok kanan atas.
+            3. Pilih <strong>"Tambahkan ke Layar Utama" (Add to Home Screen)</strong>.<br/>
+            4. Tap <strong>Tambah</strong>.
           </div>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" data-close-modal>Mengerti</button>
+          <button type="button" class="btn btn-primary" data-close-modal>Mengerti</button>
         </div>
       `);
     }
   }
 
   // ==========================================================================
-  // CLOUD SYNC & GAS CONNECTION MODAL
+  // CLOUD SYNC & SECURE GAS CONFIG MODAL (OWNER ONLY, TANPA LINK APPS SCRIPT)
   // ==========================================================================
   async function syncCloud(silent = false) {
     if (!API.isConnected()) {
-      if (!silent) toast('Mode Lokal aktif. Hubungkan URL Apps Script di Pengaturan untuk sinkronisasi Google Sheets.', 'info');
+      if (!silent) toast('Mode Lokal aktif. Owner dapat mengatur koneksi server di Pengaturan.', 'info');
       return;
     }
     state.syncing = true;
@@ -410,41 +576,46 @@
   }
 
   function openGasSetupModal() {
+    if (!hasPerm('settings')) {
+      toast('Hanya Owner yang dapat mengakses pengaturan integrasi server.', 'error');
+      return;
+    }
     const currentUrl = API.getGasUrl();
     openModal(`
       <div class="modal-head">
-        <div class="modal-title">Hubungkan Google Sheets & GAS</div>
-        <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+        <div class="modal-title">Koneksi Server Google Sheets</div>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
       </div>
       <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px">
-        Spreadsheet ID terikat: <span class="mono text-gold">${esc(CFG.SPREADSHEET_ID)}</span><br/>
-        Semua 9 sheet cafe (<strong>Users, Menu, Meja, Pesanan, Detail_Pesanan, Pengeluaran, Shift_Kasir, Member, Pengaturan</strong>) dan header-nya akan <strong>di-generate otomatis</strong>!
+        Masukkan URL endpoint Web App (<code class="mono">/exec</code>) hasil deploy backend Anda. Sistem otomatis memverifikasi & membuat seluruh 10 sheet + header di Google Sheets Anda.
       </div>
       <div class="field">
-        <label>URL Web App Google Apps Script (berakhiran /exec)</label>
-        <input id="gas-url-input" class="input mono" style="font-size:12px" placeholder="https://script.google.com/macros/s/AKfycb.../exec" value="${esc(currentUrl)}" />
-      </div>
-      <div class="card" style="background:var(--bg-elevated);padding:13px;font-size:12px;color:var(--text-secondary);margin-bottom:14px">
-        <strong class="text-gold">Langkah Cepat (1 Menit):</strong><br/>
-        1. Buka <a href="${esc(CFG.APPS_SCRIPT_URL)}" target="_blank" style="color:var(--gold-300)">Google Apps Script Anda</a> & tempel file <strong>Code.gs</strong> dari folder/repo project ini.<br/>
-        2. Klik <strong>Deploy → New deployment → Web app</strong> (Execute as: <em>Me</em>, Who has access: <em>Anyone</em>).<br/>
-        3. Salin URL <code>/exec</code> ke kolom di atas lalu klik <strong>Simpan & Generate Sheet</strong>.
-      </div>
-      <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap">
-        <a class="btn btn-secondary btn-sm" href="${esc(CFG.SPREADSHEET_URL)}" target="_blank">Buka Spreadsheet ↗</a>
+        <label>Endpoint Web App URL (Rahasia)</label>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary" data-close-modal>Batal</button>
-          <button class="btn btn-primary" id="btn-save-gas-connect">Simpan & Generate Sheet</button>
+          <input id="gas-url-input" class="input mono" type="password" style="font-size:12px" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(currentUrl)}" autocomplete="off" />
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-gas-vis">Lihat</button>
         </div>
       </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+        <button type="button" class="btn btn-primary" id="btn-save-gas-connect">Simpan & Generate Sheet</button>
+      </div>
     `);
+
+    document.getElementById('btn-toggle-gas-vis').onclick = () => {
+      const inp = document.getElementById('gas-url-input');
+      const btn = document.getElementById('btn-toggle-gas-vis');
+      const hidden = inp.type === 'password';
+      inp.type = hidden ? 'text' : 'password';
+      btn.textContent = hidden ? 'Sembunyi' : 'Lihat';
+    };
 
     document.getElementById('btn-save-gas-connect').onclick = async () => {
       const url = document.getElementById('gas-url-input').value.trim();
       const btn = document.getElementById('btn-save-gas-connect');
       if (!url) {
         API.setGasUrl('');
-        toast('Koneksi GAS dihapus (kembali ke Mode Lokal).', 'info');
+        toast('Koneksi server dilepas (Mode Lokal).', 'info');
         closeModal();
         render();
         return;
@@ -457,7 +628,7 @@
         const initRes = await API.initSheets();
         const synced = await API.syncFromCloud();
         if (synced.ok) state.db = synced.db;
-        toast(`Terhubung! ${initRes.sheets?.length || 9} sheet & header siap di Google Sheets.`, 'success');
+        toast(`Terhubung! ${initRes.sheets?.length || 10} sheet & header siap digunakan.`, 'success');
         closeModal();
         render();
       } catch (err) {
@@ -485,6 +656,10 @@
   }
 
   function setRoute(route) {
+    if (!hasPerm(route)) {
+      toast('Role Anda tidak memiliki izin untuk membuka menu ini.', 'error');
+      return;
+    }
     state.route = route;
     state.sidebarOpen = false;
     state.mobileCartOpen = false;
@@ -497,13 +672,13 @@
   const ICO = {
     dashboard: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>`,
     pos: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>`,
-    kds: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>`,
     tables: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="6" rx="2"/><path d="M7 11v8"/><path d="M17 11v8"/></svg>`,
     menu: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>`,
     history: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
     finance: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
     members: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
     settings: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+    bt: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>`,
     pc: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
     phone: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>`,
     refresh: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>`,
@@ -515,12 +690,11 @@
   };
 
   // ==========================================================================
-  // RENDER LOGIN SCREEN (WITH DOWNLOAD PC & HP RIGHT BELOW LOGIN)
+  // RENDER LOGIN SCREEN (AMAN, TANPA PASSWORD DEMO, DOWNLOAD PC & HP DI BAWAH)
   // ==========================================================================
   function renderLogin() {
     const cafeName = state.db.settings?.cafe_name || CFG.APP_NAME;
     const tagline = state.db.settings?.tagline || CFG.APP_TAGLINE;
-    const connected = API.isConnected();
 
     return `
       <div class="login-page">
@@ -534,12 +708,12 @@
           </div>
 
           <div class="hero-main">
-            <div class="hero-kicker">✦ Smart Cafe PWA System • v${esc(CFG.APP_VERSION)}</div>
+            <div class="hero-kicker">✦ Smart Cafe Cashier PWA • v${esc(CFG.APP_VERSION)}</div>
             <h1 class="hero-headline">
               Crafting Moments in <em>Every Single Pour.</em>
             </h1>
             <p class="hero-desc">
-              Platform kasir POS modern, Layar Barista (KDS), manajemen meja real-time, shift kasir, dan laporan laba rugi otomatis yang tersinkron langsung ke Google Sheets Anda.
+              Platform kasir POS modern khusus cafe dengan cetak struk Bluetooth Thermal, denah meja, shift kasir, hak akses role aman, dan sinkronisasi otomatis ke Google Sheets.
             </p>
             <div class="hero-features">
               <div class="hero-feat-item">
@@ -547,8 +721,8 @@
                 <div><strong>POS Kasir Kilat</strong><br/><span style="font-size:11px;color:#A99888">Varian, Open Bill & Struk WA</span></div>
               </div>
               <div class="hero-feat-item">
-                <div class="hero-feat-icon">${ICO.kds}</div>
-                <div><strong>Layar Barista KDS</strong><br/><span style="font-size:11px;color:#A99888">Antrean racik real-time</span></div>
+                <div class="hero-feat-icon">${ICO.bt}</div>
+                <div><strong>Printer Thermal BT</strong><br/><span style="font-size:11px;color:#A99888">Cetak struk 58mm & 80mm</span></div>
               </div>
               <div class="hero-feat-item">
                 <div class="hero-feat-icon">${ICO.tables}</div>
@@ -562,8 +736,8 @@
           </div>
 
           <div class="hero-footer">
-            <span>Google Sheets Sync: ${connected ? '● Terhubung' : '○ Mode Lokal Siap Hubung'}</span>
-            <span class="mono">Build ${esc(CFG.APP_BUILD)}</span>
+            <span>Sistem Kasir Terproteksi Role & PIN</span>
+            <span class="mono">v${esc(CFG.APP_VERSION)} • ${esc(CFG.APP_BUILD)}</span>
           </div>
         </aside>
 
@@ -578,42 +752,36 @@
             <div class="login-card">
               <div class="login-card-head">
                 <div>
-                  <h2 class="login-title">Selamat Datang</h2>
-                  <p class="login-sub">Masuk untuk mulai melayani pelanggan cafe</p>
+                  <h2 class="login-title">Masuk Kasir</h2>
+                  <p class="login-sub">Gunakan akun staff atau PIN kasir Anda</p>
                 </div>
-                <button class="btn btn-secondary btn-icon" id="btn-theme-login" title="Ganti Tema">
+                <button type="button" class="btn btn-secondary btn-icon" id="btn-theme-login" title="Ganti Tema">
                   ${state.theme === 'dark' ? ICO.sun : ICO.moon}
                 </button>
               </div>
 
               <div class="auth-tabs">
-                <button class="auth-tab ${state.loginMode === 'password' ? 'active' : ''}" data-login-mode="password">Akun & Sandi</button>
-                <button class="auth-tab ${state.loginMode === 'pin' ? 'active' : ''}" data-login-mode="pin">PIN Cepat</button>
+                <button type="button" class="auth-tab ${state.loginMode === 'password' ? 'active' : ''}" data-login-mode="password">Akun & Sandi</button>
+                <button type="button" class="auth-tab ${state.loginMode === 'pin' ? 'active' : ''}" data-login-mode="pin">PIN Cepat</button>
               </div>
 
               ${state.loginMode === 'password' ? `
                 <form id="login-form">
                   <div class="field">
                     <label>Username</label>
-                    <input id="login-username" class="input" type="text" placeholder="owner / kasir / barista" autocomplete="username" required />
+                    <input id="login-username" class="input" type="text" placeholder="Masukkan username Anda" autocomplete="username" required />
                   </div>
                   <div class="field">
                     <label>Password</label>
                     <input id="login-password" class="input" type="password" placeholder="Masukkan kata sandi" autocomplete="current-password" required />
                   </div>
                   <button type="submit" class="btn btn-primary btn-lg btn-full" style="margin-top:4px">
-                    Masuk ke Aplikasi →
+                    Masuk ke Kasir →
                   </button>
                 </form>
-                <div class="quick-demo-row">
-                  <span class="quick-demo-label">Akses cepat:</span>
-                  <button type="button" class="demo-pill" data-fill-user="owner" data-fill-pass="owner123">Owner</button>
-                  <button type="button" class="demo-pill" data-fill-user="kasir" data-fill-pass="kasir123">Kasir</button>
-                  <button type="button" class="demo-pill" data-fill-user="barista" data-fill-pass="barista123">Barista</button>
-                </div>
               ` : `
                 <div>
-                  <div style="text-align:center;font-size:12px;color:var(--text-secondary)">Masukkan 4 digit PIN Staff (Owner: 1111 • Kasir: 2222 • Barista: 3333)</div>
+                  <div style="text-align:center;font-size:12px;color:var(--text-secondary)">Masukkan 4 digit PIN Staff Anda</div>
                   <div class="pin-dots">
                     ${[0, 1, 2, 3].map((i) => `<span class="pin-dot ${state.pinBuffer.length > i ? 'filled' : ''}"></span>`).join('')}
                   </div>
@@ -655,9 +823,7 @@
             </div>
 
             <div class="login-meta-bar">
-              <button type="button" class="link-subtle" id="btn-open-gas-login">
-                <span>${connected ? '● Google Sheets Terhubung' : '⚙ Hubungkan Google Sheets'}</span>
-              </button>
+              <span>Auto-Update Aktif</span>
               <button type="button" class="link-subtle" id="btn-check-update-login">
                 ${ICO.refresh} Cek Update (v${esc(CFG.APP_VERSION)})
               </button>
@@ -669,46 +835,46 @@
   }
 
   // ==========================================================================
-  // RENDER APP SHELL (PC SIDEBAR + TOPBAR + MOBILE BOTTOM NAV)
+  // RENDER APP SHELL (FOKUS KASIR + BT MERAH/HIJAU + RBAC NAVIGATION)
   // ==========================================================================
-  function getActiveKdsCount() {
-    return (state.db.orders || []).filter(
-      (o) => o.status_dapur !== 'Selesai' && o.status_dapur !== 'Dibatalkan'
-    ).length;
+  function getOpenBillsCount() {
+    return (state.db.orders || []).filter((o) => o.status_bayar === 'Open Bill').length;
   }
 
   function renderAppShell() {
+    if (!hasPerm(state.route)) {
+      state.route = getFirstAllowedRoute();
+    }
+
     const cafeName = state.db.settings?.cafe_name || CFG.APP_NAME;
-    const kdsCount = getActiveKdsCount();
+    const openBills = getOpenBillsCount();
     const connected = API.isConnected();
     const pendingQ = API.getQueue().length;
 
-    const navItems = [
-      { id: 'dashboard', label: 'Dashboard', icon: ICO.dashboard, section: 'Utama' },
-      { id: 'pos', label: 'Kasir POS', icon: ICO.pos, section: 'Utama' },
-      { id: 'kds', label: 'Layar Barista', icon: ICO.kds, badge: kdsCount || null, section: 'Utama' },
-      { id: 'tables', label: 'Meja Cafe', icon: ICO.tables, section: 'Utama' },
+    const allNavItems = [
+      { id: 'dashboard', label: 'Dashboard', icon: ICO.dashboard, section: 'Kasir' },
+      { id: 'pos', label: 'Kasir POS', icon: ICO.pos, section: 'Kasir' },
+      { id: 'tables', label: 'Meja Cafe', icon: ICO.tables, badge: openBills || null, section: 'Kasir' },
+      { id: 'history', label: 'Riwayat Order', icon: ICO.history, section: 'Kasir' },
       { id: 'menu', label: 'Kelola Menu', icon: ICO.menu, section: 'Manajemen' },
-      { id: 'history', label: 'Riwayat Order', icon: ICO.history, section: 'Manajemen' },
       { id: 'finance', label: 'Keuangan & Shift', icon: ICO.finance, section: 'Manajemen' },
       { id: 'members', label: 'Member Loyal', icon: ICO.members, section: 'Manajemen' },
-      { id: 'settings', label: 'Pengaturan & GAS', icon: ICO.settings, section: 'Sistem' }
-    ];
+      { id: 'settings', label: 'Pengaturan', icon: ICO.settings, section: 'Sistem' }
+    ].filter((item) => hasPerm(item.id));
 
     const routeTitles = {
       dashboard: 'Dashboard Eksekutif',
       pos: 'Kasir POS Cafe',
-      kds: 'Layar Barista (KDS)',
       tables: 'Denah Meja Cafe',
       menu: 'Manajemen Menu & Stok',
       history: 'Riwayat Transaksi',
       finance: 'Keuangan, Shift & Laba Rugi',
       members: 'Member & Poin Loyalitas',
-      settings: 'Pengaturan & Google Sheets'
+      settings: 'Pengaturan Sistem & Staff'
     };
 
     let currentSection = '';
-    const sidebarNavHTML = navItems.map((item) => {
+    const sidebarNavHTML = allNavItems.map((item) => {
       let secHeader = '';
       if (item.section !== currentSection) {
         currentSection = item.section;
@@ -716,7 +882,7 @@
       }
       return `
         ${secHeader}
-        <button class="nav-item ${state.route === item.id ? 'active' : ''}" data-nav="${item.id}">
+        <button type="button" class="nav-item ${state.route === item.id ? 'active' : ''}" data-nav="${item.id}">
           ${item.icon}
           <span>${item.label}</span>
           ${item.badge ? `<span class="nav-badge">${item.badge}</span>` : ''}
@@ -724,7 +890,18 @@
       `;
     }).join('');
 
+    // Mobile bottom nav (maksimal 5 menu sesuai hak akses role!)
+    const mobileNavPool = [
+      { id: 'dashboard', label: 'Home', icon: ICO.dashboard },
+      { id: 'pos', label: 'Kasir', icon: ICO.pos },
+      { id: 'tables', label: 'Meja', icon: ICO.tables, badge: openBills },
+      { id: 'history', label: 'Riwayat', icon: ICO.history },
+      { id: 'settings', label: 'Setelan', icon: ICO.settings },
+      { id: 'finance', label: 'Shift', icon: ICO.finance }
+    ].filter((x) => hasPerm(x.id)).slice(0, 5);
+
     const initials = (state.user?.nama || 'CL').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    const btShortName = state.btName ? (state.btName.length > 14 ? state.btName.slice(0, 14) + '…' : state.btName) : 'Konek';
 
     return `
       <div class="app-shell">
@@ -735,7 +912,7 @@
             <img src="./assets/icon.svg" alt="${esc(cafeName)}" />
             <div>
               <div class="sidebar-brand-title">${esc(cafeName)}</div>
-              <div class="sidebar-brand-sub">v${esc(CFG.APP_VERSION)} • PWA</div>
+              <div class="sidebar-brand-sub">v${esc(CFG.APP_VERSION)} • Kasir</div>
             </div>
           </div>
 
@@ -745,7 +922,7 @@
 
           <div class="sidebar-footer">
             ${!state.isStandalone ? `
-              <button class="btn btn-secondary btn-sm btn-full" id="btn-install-sidebar">
+              <button type="button" class="btn btn-secondary btn-sm btn-full" id="btn-install-sidebar">
                 ⬇ Install Aplikasi PC/HP
               </button>
             ` : ''}
@@ -755,7 +932,7 @@
                 <strong>${esc(state.user?.nama || 'Staff')}</strong>
                 <span>${esc(state.user?.role || 'Kasir')}</span>
               </div>
-              <button class="btn btn-ghost btn-icon" id="btn-logout" title="Keluar">${ICO.logout}</button>
+              <button type="button" class="btn btn-ghost btn-icon" id="btn-logout" title="Keluar">${ICO.logout}</button>
             </div>
           </div>
         </aside>
@@ -763,16 +940,24 @@
         <div class="main-area">
           <header class="topbar">
             <div class="topbar-left">
-              <button class="btn btn-secondary btn-icon mobile-menu-btn" id="btn-toggle-sidebar">${ICO.burger}</button>
+              <button type="button" class="btn btn-secondary btn-icon mobile-menu-btn" id="btn-toggle-sidebar">${ICO.burger}</button>
               <h1 class="page-title">${routeTitles[state.route] || cafeName}</h1>
             </div>
             <div class="topbar-right">
-              <button class="sync-pill" id="btn-sync-cloud" title="Sinkronkan Google Sheets">
-                <span class="sync-dot ${state.syncing ? 'syncing' : connected ? 'online' : ''}"></span>
-                <span class="sync-text">${state.syncing ? 'Menyinkron...' : connected ? (pendingQ ? `Antre ${pendingQ}` : 'Sheets Aktif') : 'Mode Lokal'}</span>
+              <!-- INDIKATOR BLUETOOTH THERMAL PRINTER: MERAH BELUM KONEK, HIJAU SUDAH KONEK -->
+              <button type="button" class="bt-pill ${state.btConnected ? 'connected' : 'disconnected'}" id="btn-bt-status" title="Printer Thermal Bluetooth">
+                <span class="bt-dot"></span>
+                ${ICO.bt}
+                <span>BT</span>
+                <span class="bt-label-full">${state.btConnected ? '• ' + esc(btShortName) : '• Belum Konek'}</span>
               </button>
-              <button class="btn btn-secondary btn-icon" id="btn-check-update-top" title="Cek Update Terbaru">${ICO.refresh}</button>
-              <button class="btn btn-secondary btn-icon" id="btn-theme-top" title="Tema Gelap/Terang">
+
+              <button type="button" class="sync-pill" id="btn-sync-cloud" title="Status Sinkronisasi Cloud">
+                <span class="sync-dot ${state.syncing ? 'syncing' : connected ? 'online' : ''}"></span>
+                <span class="sync-text">${state.syncing ? 'Sinkron...' : connected ? (pendingQ ? `Antre ${pendingQ}` : 'Cloud Aktif') : 'Mode Lokal'}</span>
+              </button>
+              <button type="button" class="btn btn-secondary btn-icon" id="btn-check-update-top" title="Cek Update Terbaru">${ICO.refresh}</button>
+              <button type="button" class="btn btn-secondary btn-icon" id="btn-theme-top" title="Tema Gelap/Terang">
                 ${state.theme === 'dark' ? ICO.sun : ICO.moon}
               </button>
             </div>
@@ -783,15 +968,9 @@
           </main>
         </div>
 
-        <nav class="mobile-bottom-nav">
-          ${[
-            { id: 'dashboard', label: 'Home', icon: ICO.dashboard },
-            { id: 'pos', label: 'Kasir', icon: ICO.pos },
-            { id: 'kds', label: 'Barista', icon: ICO.kds, badge: kdsCount },
-            { id: 'tables', label: 'Meja', icon: ICO.tables },
-            { id: 'settings', label: 'Setelan', icon: ICO.settings }
-          ].map((b) => `
-            <button class="bnav-btn ${state.route === b.id ? 'active' : ''}" data-nav="${b.id}">
+        <nav class="mobile-bottom-nav" style="grid-template-columns:repeat(${mobileNavPool.length},1fr)">
+          ${mobileNavPool.map((b) => `
+            <button type="button" class="bnav-btn ${state.route === b.id ? 'active' : ''}" data-nav="${b.id}">
               ${b.icon}
               <span>${b.label}</span>
               ${b.badge ? `<span style="position:absolute;top:6px;right:18%;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--gold-400);color:#160E0A;font-size:10px;font-weight:800;display:grid;place-items:center">${b.badge}</span>` : ''}
@@ -806,19 +985,18 @@
     switch (state.route) {
       case 'dashboard': return renderDashboard();
       case 'pos': return renderPOS();
-      case 'kds': return renderKDS();
       case 'tables': return renderTables();
       case 'menu': return renderMenuManager();
       case 'history': return renderHistory();
       case 'finance': return renderFinance();
       case 'members': return renderMembers();
       case 'settings': return renderSettings();
-      default: return renderDashboard();
+      default: return renderPOS();
     }
   }
 
   // ==========================================================================
-  // VIEW 1: DASHBOARD EKSEKUTIF
+  // VIEW 1: DASHBOARD EKSEKUTIF (FOKUS KASIR)
   // ==========================================================================
   function renderDashboard() {
     const today = todayISO();
@@ -827,9 +1005,15 @@
     const todayRevenue = todayOrders.reduce((s, o) => s + Number(o.total || 0), 0);
 
     let todayHpp = 0;
+    let todayCups = 0;
     todayOrders.forEach((o) => {
-      (o.items || []).forEach((it) => { todayHpp += Number(it.hpp || 0) * Number(it.qty || 1); });
+      (o.items || []).forEach((it) => {
+        const q = Number(it.qty || 1);
+        todayHpp += Number(it.hpp || 0) * q;
+        todayCups += q;
+      });
     });
+
     const todayExpense = (state.db.expenses || [])
       .filter((e) => String(e.tanggal).slice(0, 10) === today)
       .reduce((s, e) => s + Number(e.nominal || 0), 0);
@@ -837,9 +1021,8 @@
 
     const occupiedTables = (state.db.tables || []).filter((t) => t.status === 'Terisi').length;
     const totalTables = (state.db.tables || []).length;
-    const activeKds = getActiveKdsCount();
+    const openBills = getOpenBillsCount();
 
-    // 7-day sales chart
     const days = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000);
@@ -848,15 +1031,10 @@
       const rev = validOrders
         .filter((o) => String(o.tanggal).slice(0, 10) === iso)
         .reduce((s, o) => s + Number(o.total || 0), 0);
-      days.push({
-        label: d.toLocaleDateString('id-ID', { weekday: 'short' }),
-        iso,
-        rev
-      });
+      days.push({ label: d.toLocaleDateString('id-ID', { weekday: 'short' }), iso, rev });
     }
     const maxRev = Math.max(...days.map((d) => d.rev), 100000);
 
-    // Top 5 Menu
     const menuCounts = {};
     validOrders.forEach((o) => {
       (o.items || []).forEach((it) => {
@@ -868,7 +1046,6 @@
     });
     const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty).slice(0, 5);
 
-    // Payment Breakdown
     const payMap = {};
     validOrders.forEach((o) => {
       const m = o.metode_bayar || 'Tunai';
@@ -877,13 +1054,13 @@
     const totalAllRev = Object.values(payMap).reduce((a, b) => a + b, 0) || 1;
 
     return `
-      ${!API.isConnected() ? `
+      ${!API.isConnected() && hasPerm('settings') ? `
         <div class="card" style="margin-bottom:18px;border-color:var(--border-strong);background:linear-gradient(135deg, rgba(216,167,91,0.14), rgba(216,167,91,0.03));display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
           <div>
-            <div style="font-weight:700;color:var(--gold-300)">✦ Hubungkan ke Google Sheets Anda</div>
-            <div style="font-size:12.5px;color:var(--text-secondary)">Saat ini aplikasi berjalan dalam Mode Lokal. Tempel URL Web App Apps Script agar 9 sheet & header ter-generate otomatis dan tersinkron real-time.</div>
+            <div style="font-weight:700;color:var(--gold-300)">✦ Hubungkan Sinkronisasi Google Sheets (Khusus Owner)</div>
+            <div style="font-size:12.5px;color:var(--text-secondary)">Saat ini aplikasi berjalan dalam Mode Lokal. Masukkan URL endpoint Web App untuk menyinkronkan data & auto-generate sheet.</div>
           </div>
-          <button class="btn btn-primary btn-sm" id="btn-dash-connect-gas">Hubungkan & Generate Sheet</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-dash-connect-gas">Atur Koneksi Server</button>
         </div>
       ` : ''}
 
@@ -894,7 +1071,7 @@
             <span class="kpi-ico">${ICO.finance}</span>
           </div>
           <div class="kpi-value">${fmtRp(todayRevenue)}</div>
-          <div class="kpi-sub">${todayOrders.length} transaksi valid hari ini</div>
+          <div class="kpi-sub">${todayOrders.length} transaksi • ${todayCups} item terjual</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-head">
@@ -902,15 +1079,15 @@
             <span class="kpi-ico">✦</span>
           </div>
           <div class="kpi-value ${todayProfit >= 0 ? 'text-success' : 'text-danger'}">${fmtRp(todayProfit)}</div>
-          <div class="kpi-sub">Omzet - HPP - Pengeluaran hari ini</div>
+          <div class="kpi-sub">Omzet − HPP − Pengeluaran</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-head">
-            <span class="kpi-label">Antrean Barista</span>
-            <span class="kpi-ico">${ICO.kds}</span>
+            <span class="kpi-label">Open Bill Aktif</span>
+            <span class="kpi-ico">${ICO.history}</span>
           </div>
-          <div class="kpi-value">${activeKds} <span style="font-size:13px;font-weight:500;color:var(--text-secondary)">pesanan</span></div>
-          <div class="kpi-sub"><button class="link-subtle" data-nav="kds">Buka Layar Barista →</button></div>
+          <div class="kpi-value">${openBills} <span style="font-size:13px;font-weight:500;color:var(--text-secondary)">tagihan</span></div>
+          <div class="kpi-sub"><button type="button" class="link-subtle" data-nav="tables">Lihat Meja / Tagihan →</button></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-head">
@@ -918,7 +1095,7 @@
             <span class="kpi-ico">${ICO.tables}</span>
           </div>
           <div class="kpi-value">${occupiedTables} / ${totalTables}</div>
-          <div class="kpi-sub"><button class="link-subtle" data-nav="pos">+ Buat Pesanan Baru →</button></div>
+          <div class="kpi-sub"><button type="button" class="link-subtle" data-nav="pos">+ Buka Kasir POS →</button></div>
         </div>
       </section>
 
@@ -929,7 +1106,7 @@
               <div class="card-title">Tren Penjualan 7 Hari Terakhir</div>
               <div class="card-subtitle">Akumulasi omzet harian CAFE CL</div>
             </div>
-            <button class="btn btn-primary btn-sm" data-nav="pos">+ Pesanan Baru</button>
+            ${hasPerm('pos') ? `<button type="button" class="btn btn-primary btn-sm" data-nav="pos">+ Pesanan Baru</button>` : ''}
           </div>
           <div class="bar-chart">
             ${days.map((d) => {
@@ -974,10 +1151,10 @@
         <div class="card">
           <div class="card-header">
             <div>
-              <div class="card-title">Pesanan Terakhir</div>
-              <div class="card-subtitle">Status dapur & pembayaran terkini</div>
+              <div class="card-title">Transaksi Terakhir</div>
+              <div class="card-subtitle">Pembayaran & Open Bill terbaru</div>
             </div>
-            <button class="btn btn-secondary btn-sm" data-nav="history">Lihat Semua</button>
+            ${hasPerm('history') ? `<button type="button" class="btn btn-secondary btn-sm" data-nav="history">Lihat Semua</button>` : ''}
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -1064,12 +1241,12 @@
               ${ICO.search}
               <input id="pos-search-input" class="input" type="search" placeholder="Cari kopi, matcha, croissant, kode menu..." value="${esc(state.posSearch)}" />
             </div>
-            ${state.editingOrderId ? `<span class="badge badge-warning">Mengedit Open Bill</span>` : ''}
+            ${state.editingOrderId ? `<span class="badge badge-warning">Menyelesaikan Open Bill</span>` : ''}
           </div>
 
           <div class="cat-pills">
             ${categories.map((c) => `
-              <button class="cat-pill ${state.posCategory === c ? 'active' : ''}" data-pos-cat="${esc(c)}">
+              <button type="button" class="cat-pill ${state.posCategory === c ? 'active' : ''}" data-pos-cat="${esc(c)}">
                 ${c === 'Favorit' ? '★ ' : ''}${esc(c)}
               </button>
             `).join('')}
@@ -1078,10 +1255,11 @@
           <div class="menu-grid">
             ${filteredMenu.map((m) => {
               const soldOut = !m.tersedia || Number(m.stok) <= 0;
+              const imgUrl = safeUrl(m.foto_url);
               return `
                 <article class="menu-card ${soldOut ? 'sold-out' : ''}" data-pick-menu="${esc(m.id)}">
                   <div class="menu-thumb">
-                    ${m.foto_url ? `<img src="${esc(m.foto_url)}" alt="${esc(m.nama)}" loading="lazy" />` : `<span class="menu-art-emoji">${categoryIcon(m.kategori)}</span>`}
+                    ${imgUrl ? `<img src="${esc(imgUrl)}" alt="${esc(m.nama)}" loading="lazy" />` : `<span class="menu-art-emoji">${categoryIcon(m.kategori)}</span>`}
                     <span class="menu-cat-tag">${esc(m.kategori)}</span>
                     ${m.favorit ? `<span class="menu-fav-star">★</span>` : ''}
                   </div>
@@ -1103,40 +1281,39 @@
         <aside class="cart-panel ${state.mobileCartOpen ? 'mobile-open' : ''}">
           <div class="cart-head">
             <div>
-              <strong style="font-size:15px">Keranjang Pesanan</strong>
+              <strong style="font-size:15px">Keranjang Kasir</strong>
               <div style="font-size:11.5px;color:var(--text-secondary)">${cartCount} item dipilih</div>
             </div>
             <div style="display:flex;gap:6px">
-              ${state.cart.length ? `<button class="btn btn-ghost btn-sm text-danger" id="btn-clear-cart">Hapus</button>` : ''}
-              <button class="btn btn-secondary btn-icon mobile-menu-btn" id="btn-close-mobile-cart">✕</button>
+              ${state.cart.length ? `<button type="button" class="btn btn-ghost btn-sm text-danger" id="btn-clear-cart">Hapus</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-icon mobile-menu-btn" id="btn-close-mobile-cart">✕</button>
             </div>
           </div>
 
           <div class="order-type-tabs">
             ${['Dine-In', 'Take Away', 'Delivery'].map((t) => `
-              <button class="type-btn ${state.orderType === t ? 'active' : ''}" data-order-type="${t}">${t}</button>
+              <button type="button" class="type-btn ${state.orderType === t ? 'active' : ''}" data-order-type="${t}">${t}</button>
             `).join('')}
           </div>
 
           <div class="cart-meta-inputs">
             <input id="cart-customer" class="input" placeholder="Nama Pelanggan" value="${esc(state.customerName)}" />
+            <select id="cart-member" class="select">
+              <option value="">-- Member (Opsional) --</option>
+              ${(state.db.members || []).map((m) => `
+                <option value="${esc(m.id)}" ${state.selectedMemberId === m.id ? 'selected' : ''}>${esc(m.nama)} (${m.poin} pt)</option>
+              `).join('')}
+            </select>
             ${state.orderType === 'Dine-In' ? `
-              <select id="cart-table" class="select">
-                <option value="">-- Pilih Meja --</option>
+              <select id="cart-table" class="select" style="grid-column:1/-1">
+                <option value="">-- Pilih Meja Cafe --</option>
                 ${(state.db.tables || []).map((t) => `
                   <option value="${esc(t.nama)}" ${state.selectedTable === t.nama ? 'selected' : ''}>
-                    ${esc(t.nama)} (${t.status})
+                    ${esc(t.nama)} — ${esc(t.area)} (${esc(t.status)})
                   </option>
                 `).join('')}
               </select>
-            ` : `
-              <select id="cart-member" class="select">
-                <option value="">-- Member (Opsional) --</option>
-                ${(state.db.members || []).map((m) => `
-                  <option value="${esc(m.id)}" ${state.selectedMemberId === m.id ? 'selected' : ''}>${esc(m.nama)} (${m.poin} pt)</option>
-                `).join('')}
-              </select>
-            `}
+            ` : ''}
           </div>
 
           <div class="cart-items">
@@ -1147,9 +1324,9 @@
                   ${it.varian ? `<div class="cart-item-var">${esc(it.varian)}</div>` : ''}
                   ${it.catatan ? `<div class="cart-item-note">"${esc(it.catatan)}"</div>` : ''}
                   <div class="cart-qty-ctrl">
-                    <button class="qty-btn" data-qty-dec="${idx}">−</button>
+                    <button type="button" class="qty-btn" data-qty-dec="${idx}">−</button>
                     <span class="mono" style="min-width:20px;text-align:center;font-weight:700">${it.qty}</span>
-                    <button class="qty-btn" data-qty-inc="${idx}">+</button>
+                    <button type="button" class="qty-btn" data-qty-inc="${idx}">+</button>
                   </div>
                 </div>
                 <div style="text-align:right">
@@ -1170,24 +1347,32 @@
               <input id="cart-discount" class="input mono" type="number" min="0" placeholder="Diskon (Rp)" value="${state.discount || ''}" style="padding:7px 10px;font-size:12px" />
               <input id="cart-note" class="input" placeholder="Catatan order..." value="${esc(state.orderNote)}" style="padding:7px 10px;font-size:12px" />
             </div>
-            <div class="sum-row"><span>Subtotal</span><span class="mono">${fmtRp(totals.subtotal)}</span></div>
-            ${totals.diskon > 0 ? `<div class="sum-row text-success"><span>Diskon</span><span class="mono">−${fmtRp(totals.diskon)}</span></div>` : ''}
-            ${totals.taxPct > 0 ? `<div class="sum-row"><span>Pajak PB1 (${totals.taxPct}%)</span><span class="mono">${fmtRp(totals.pajak)}</span></div>` : ''}
-            ${totals.srvPct > 0 ? `<div class="sum-row"><span>Service (${totals.srvPct}%)</span><span class="mono">${fmtRp(totals.service)}</span></div>` : ''}
-            <div class="sum-row total"><span>Total Bayar</span><span class="mono text-gold">${fmtRp(totals.total)}</span></div>
+            <div id="cart-totals-box">
+              ${renderCartTotalsHTML(totals)}
+            </div>
 
             <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:12px">
-              <button class="btn btn-secondary" id="btn-open-bill" ${!state.cart.length ? 'disabled' : ''}>Open Bill</button>
-              <button class="btn btn-primary" id="btn-checkout" ${!state.cart.length ? 'disabled' : ''}>Bayar Sekarang</button>
+              <button type="button" class="btn btn-secondary" id="btn-open-bill" ${!state.cart.length ? 'disabled' : ''}>Open Bill</button>
+              <button type="button" class="btn btn-primary" id="btn-checkout" ${!state.cart.length ? 'disabled' : ''}>Bayar Sekarang</button>
             </div>
           </div>
         </aside>
 
-        <button class="mobile-cart-fab" id="btn-open-mobile-cart">
+        <button type="button" class="mobile-cart-fab" id="btn-open-mobile-cart">
           <span>🛒 ${cartCount} Item</span>
           <span class="mono">${fmtRp(totals.total)}</span>
         </button>
       </div>
+    `;
+  }
+
+  function renderCartTotalsHTML(totals) {
+    return `
+      <div class="sum-row"><span>Subtotal</span><span class="mono">${fmtRp(totals.subtotal)}</span></div>
+      ${totals.diskon > 0 ? `<div class="sum-row text-success"><span>Diskon</span><span class="mono">−${fmtRp(totals.diskon)}</span></div>` : ''}
+      ${totals.taxPct > 0 ? `<div class="sum-row"><span>Pajak PB1 (${totals.taxPct}%)</span><span class="mono">${fmtRp(totals.pajak)}</span></div>` : ''}
+      ${totals.srvPct > 0 ? `<div class="sum-row"><span>Service (${totals.srvPct}%)</span><span class="mono">${fmtRp(totals.service)}</span></div>` : ''}
+      <div class="sum-row total"><span>Total Bayar</span><span class="mono text-gold">${fmtRp(totals.total)}</span></div>
     `;
   }
 
@@ -1201,6 +1386,7 @@
       .filter((arr) => arr.length > 0);
 
     const selectedOpts = groups.map((g) => g[0]);
+    let savedNote = '';
 
     function calcExtra() {
       let extra = 0;
@@ -1219,7 +1405,7 @@
             <div class="modal-title">${esc(m.nama)}</div>
             <div class="mono text-gold" style="font-weight:700">${fmtRp(unitPrice)}</div>
           </div>
-          <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+          <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
         ${m.deskripsi ? `<p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px">${esc(m.deskripsi)}</p>` : ''}
         ${groups.map((g, gi) => `
@@ -1233,14 +1419,17 @@
           </div>
         `).join('')}
         <div class="field">
-          <label>Catatan Barista / Dapur (Opsional)</label>
-          <input id="item-note-input" class="input" placeholder="Misal: es sedikit, ekstra panas, pisah gula..." />
+          <label>Catatan Pesanan (Opsional)</label>
+          <input id="item-note-input" class="input" placeholder="Misal: es sedikit, ekstra panas, pisah gula..." value="${esc(savedNote)}" />
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" data-close-modal>Batal</button>
-          <button class="btn btn-primary" id="btn-confirm-add-cart">+ Tambah ke Pesanan • ${fmtRp(unitPrice)}</button>
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="button" class="btn btn-primary" id="btn-confirm-add-cart">+ Tambah • ${fmtRp(unitPrice)}</button>
         </div>
       `);
+
+      const noteEl = document.getElementById('item-note-input');
+      noteEl?.addEventListener('input', (e) => { savedNote = e.target.value; });
 
       document.querySelectorAll('[data-opt-g]').forEach((btn) => {
         btn.onclick = () => {
@@ -1251,7 +1440,7 @@
       });
 
       document.getElementById('btn-confirm-add-cart').onclick = () => {
-        const note = document.getElementById('item-note-input').value.trim();
+        const note = (document.getElementById('item-note-input')?.value || '').trim();
         const varianStr = selectedOpts.join(' • ');
         const finalPrice = Number(m.harga) + calcExtra();
         const existing = state.cart.find(
@@ -1281,9 +1470,9 @@
   }
 
   function openCheckoutModal(isOpenBill = false) {
-    if (!state.cart.length) return;
+    if (!state.cart.length || state.submittingOrder) return;
     if (state.orderType === 'Dine-In' && !state.selectedTable) {
-      toast('Silakan pilih nomor meja terlebih dahulu untuk Dine-In.', 'error');
+      toast('Silakan pilih meja terlebih dahulu untuk Dine-In.', 'error');
       return;
     }
 
@@ -1309,10 +1498,10 @@
       openModal(`
         <div class="modal-head">
           <div>
-            <div class="modal-title">Pembayaran Pesanan</div>
+            <div class="modal-title">Pembayaran Kasir</div>
             <div style="font-size:12px;color:var(--text-secondary)">${esc(state.orderType)} ${state.selectedTable ? '• ' + esc(state.selectedTable) : ''}</div>
           </div>
-          <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+          <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
         </div>
 
         <div class="card" style="background:var(--bg-elevated);text-align:center;margin-bottom:16px">
@@ -1332,7 +1521,7 @@
         ${payMethod === 'Tunai' ? `
           <div class="field">
             <label>Uang Diterima (Rp)</label>
-            <input id="pay-cash-input" class="input mono" type="number" value="${cashReceived}" />
+            <input id="pay-cash-input" class="input mono" type="number" min="0" value="${cashReceived}" />
             <div class="option-chip-group" style="margin-top:8px">
               ${quickAmounts.map((amt) => `
                 <button type="button" class="option-chip" data-quick-cash="${amt}">${amt === totals.total ? 'Uang Pas' : fmtRp(amt)}</button>
@@ -1341,13 +1530,13 @@
           </div>
           <div class="sum-row" style="font-size:15px;font-weight:700;padding:8px 0">
             <span>Kembalian</span>
-            <span class="mono text-success">${fmtRp(change)}</span>
+            <span id="pay-change-val" class="mono text-success">${fmtRp(change)}</span>
           </div>
         ` : ''}
 
         <div class="modal-actions">
-          <button class="btn btn-secondary" data-close-modal>Batal</button>
-          <button class="btn btn-primary btn-lg" id="btn-confirm-pay">Selesaikan & Cetak Struk ✓</button>
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-confirm-pay">Selesaikan & Struk ✓</button>
         </div>
       `);
 
@@ -1369,7 +1558,9 @@
       const cashInput = document.getElementById('pay-cash-input');
       if (cashInput) {
         cashInput.oninput = () => {
-          cashReceived = Number(cashInput.value) || 0;
+          cashReceived = Math.max(0, Number(cashInput.value) || 0);
+          const chEl = document.getElementById('pay-change-val');
+          if (chEl) chEl.textContent = fmtRp(Math.max(0, cashReceived - totals.total));
         };
       }
 
@@ -1391,89 +1582,102 @@
   }
 
   async function finalizeOrder(paymentInfo) {
-    const totals = calcCartTotals();
-    const today = todayISO();
-    const existingIdx = state.editingOrderId
-      ? state.db.orders.findIndex((o) => o.id === state.editingOrderId)
-      : -1;
+    if (state.submittingOrder) return;
+    state.submittingOrder = true;
+    try {
+      const totals = calcCartTotals();
+      const today = todayISO();
+      const existingIdx = state.editingOrderId
+        ? state.db.orders.findIndex((o) => o.id === state.editingOrderId)
+        : -1;
 
-    const orderId = existingIdx >= 0 ? state.db.orders[existingIdx].id : ('ORD-' + Date.now());
-    const invoice = existingIdx >= 0
-      ? state.db.orders[existingIdx].no_invoice
-      : ('INV-' + today.replace(/-/g, '') + '-' + String(Math.floor(100 + Math.random() * 900)));
+      const orderId = existingIdx >= 0 ? state.db.orders[existingIdx].id : ('ORD-' + Date.now());
+      const invoice = existingIdx >= 0
+        ? state.db.orders[existingIdx].no_invoice
+        : ('INV-' + today.replace(/-/g, '') + '-' + String(Math.floor(100 + Math.random() * 900)));
 
-    const order = {
-      id: orderId,
-      no_invoice: invoice,
-      tanggal: today,
-      waktu: nowTime(),
-      kasir: state.user?.nama || 'Kasir',
-      pelanggan: state.customerName.trim() || 'Tamu Walk-in',
-      tipe_order: state.orderType,
-      meja: state.orderType === 'Dine-In' ? state.selectedTable : '-',
-      items: JSON.parse(JSON.stringify(state.cart)),
-      subtotal: totals.subtotal,
-      diskon: totals.diskon,
-      pajak: totals.pajak,
-      service_charge: totals.service,
-      total: totals.total,
-      metode_bayar: paymentInfo.metode_bayar,
-      bayar: paymentInfo.bayar,
-      kembalian: paymentInfo.kembalian,
-      status_bayar: paymentInfo.status_bayar,
-      status_dapur: existingIdx >= 0 ? state.db.orders[existingIdx].status_dapur : 'Menunggu',
-      catatan: state.orderNote.trim(),
-      member_id: state.selectedMemberId || ''
-    };
+      const order = {
+        id: orderId,
+        no_invoice: invoice,
+        tanggal: today,
+        waktu: nowTime(),
+        kasir: state.user?.nama || 'Kasir',
+        pelanggan: state.customerName.trim() || 'Tamu Walk-in',
+        tipe_order: state.orderType,
+        meja: state.orderType === 'Dine-In' ? state.selectedTable : '-',
+        items: JSON.parse(JSON.stringify(state.cart)),
+        subtotal: totals.subtotal,
+        diskon: totals.diskon,
+        pajak: totals.pajak,
+        service_charge: totals.service,
+        total: totals.total,
+        metode_bayar: paymentInfo.metode_bayar,
+        bayar: paymentInfo.bayar,
+        kembalian: paymentInfo.kembalian,
+        status_bayar: paymentInfo.status_bayar,
+        status_dapur: 'Selesai',
+        catatan: state.orderNote.trim(),
+        member_id: state.selectedMemberId || ''
+      };
 
-    if (existingIdx >= 0) {
-      state.db.orders[existingIdx] = order;
-    } else {
-      state.db.orders.push(order);
-      // Kurangi stok lokal
-      order.items.forEach((it) => {
-        const m = state.db.menu.find((x) => x.id === it.menu_id);
-        if (m) m.stok = Math.max(0, Number(m.stok) - Number(it.qty));
-      });
-    }
-
-    // Update status meja lokal
-    if (order.tipe_order === 'Dine-In' && order.meja !== '-') {
-      const tbl = state.db.tables.find((t) => t.nama === order.meja);
-      if (tbl) {
-        tbl.status = 'Terisi';
-        tbl.order_aktif = order.no_invoice;
+      if (existingIdx >= 0) {
+        state.db.orders[existingIdx] = order;
+      } else {
+        state.db.orders.push(order);
+        order.items.forEach((it) => {
+          const m = state.db.menu.find((x) => x.id === it.menu_id);
+          if (m) m.stok = Math.max(0, Number(m.stok) - Number(it.qty));
+        });
       }
-    }
 
-    // Update poin member lokal
-    if (order.member_id && order.status_bayar === 'Lunas') {
-      const mbr = state.db.members.find((m) => m.id === order.member_id);
-      if (mbr) {
-        mbr.poin += Math.floor(order.total / 10000);
-        mbr.total_belanja += order.total;
-        mbr.kunjungan += 1;
-        mbr.tier = mbr.total_belanja >= 3000000 ? 'Signature' : mbr.total_belanja >= 1200000 ? 'Gold' : mbr.total_belanja >= 400000 ? 'Silver' : 'Bronze';
+      // Update status Meja otomatis: Open Bill -> Terisi, Lunas -> Tersedia
+      if (order.tipe_order === 'Dine-In' && order.meja !== '-') {
+        const tbl = state.db.tables.find((t) => t.nama === order.meja);
+        if (tbl) {
+          const isOpen = order.status_bayar === 'Open Bill';
+          tbl.status = isOpen ? 'Terisi' : 'Tersedia';
+          tbl.order_aktif = isOpen ? order.no_invoice : '';
+        }
       }
+
+      // Update poin Member otomatis saat Lunas
+      if (order.member_id && order.status_bayar === 'Lunas') {
+        const mbr = state.db.members.find((m) => m.id === order.member_id);
+        if (mbr) {
+          mbr.poin += Math.floor(order.total / 10000);
+          mbr.total_belanja += order.total;
+          mbr.kunjungan += 1;
+          mbr.tier = mbr.total_belanja >= 3000000 ? 'Signature' : mbr.total_belanja >= 1200000 ? 'Gold' : mbr.total_belanja >= 400000 ? 'Silver' : 'Bronze';
+        }
+      }
+
+      API.saveLocal(state.db);
+      API.sendAction('saveOrder', order);
+
+      state.cart = [];
+      state.customerName = '';
+      state.selectedTable = '';
+      state.selectedMemberId = '';
+      state.orderNote = '';
+      state.discount = 0;
+      state.editingOrderId = null;
+      state.mobileCartOpen = false;
+
+      closeModal();
+      render();
+      toast(order.status_bayar === 'Open Bill' ? `Open Bill ${order.no_invoice} tersimpan!` : `Pembayaran ${order.no_invoice} berhasil!`, 'success');
+
+      // Auto-print Bluetooth Thermal jika aktif & terhubung
+      if (state.db.settings?.auto_print_bt && state.btConnected && order.status_bayar === 'Lunas') {
+        Printer.printOrderReceipt(order, state.db.settings)
+          .then(() => toast('Struk otomatis tercetak di Printer Bluetooth!', 'success'))
+          .catch((err) => toast('Auto-print BT gagal: ' + err.message, 'error'));
+      }
+
+      openReceiptModal(order);
+    } finally {
+      state.submittingOrder = false;
     }
-
-    API.saveLocal(state.db);
-    API.sendAction('saveOrder', order);
-
-    // Reset keranjang
-    state.cart = [];
-    state.customerName = '';
-    state.selectedTable = '';
-    state.selectedMemberId = '';
-    state.orderNote = '';
-    state.discount = 0;
-    state.editingOrderId = null;
-    state.mobileCartOpen = false;
-
-    closeModal();
-    render();
-    toast(order.status_bayar === 'Open Bill' ? `Open Bill ${order.no_invoice} tersimpan!` : `Pembayaran ${order.no_invoice} berhasil!`, 'success');
-    openReceiptModal(order);
   }
 
   function openReceiptModal(order) {
@@ -1520,18 +1724,48 @@
     openModal(`
       <div class="modal-head">
         <div class="modal-title">Struk ${esc(order.no_invoice)}</div>
-        <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
       </div>
       ${receiptHTML}
-      <div class="modal-actions" style="flex-wrap:wrap">
-        <button class="btn btn-secondary" id="btn-share-wa">Kirim WhatsApp</button>
-        <button class="btn btn-primary" id="btn-print-receipt">🖨 Cetak Struk</button>
+      <div class="modal-actions" style="flex-wrap:wrap;justify-content:space-between">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-share-wa">WhatsApp</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-print-browser">Cetak Browser</button>
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-print-bt-receipt">
+          ${state.btConnected ? '🟢 Cetak Thermal BT' : '🔴 Hubungkan & Cetak BT'}
+        </button>
       </div>
     `);
 
-    document.getElementById('btn-print-receipt').onclick = () => {
-      const printArea = document.getElementById('print-receipt-area');
-      printArea.innerHTML = receiptHTML;
+    document.getElementById('btn-print-bt-receipt').onclick = async () => {
+      const btn = document.getElementById('btn-print-bt-receipt');
+      try {
+        if (!state.btConnected) {
+          btn.disabled = true;
+          btn.textContent = 'Menghubungkan BT...';
+          const res = await Printer.connect();
+          state.btConnected = true;
+          state.btName = res.name;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Mencetak ke Thermal BT...';
+        await Printer.printOrderReceipt(order, state.db.settings);
+        toast('Struk berhasil dicetak ke Printer Bluetooth!', 'success');
+        btn.disabled = false;
+        btn.textContent = '🟢 Cetak Ulang BT';
+        render();
+      } catch (err) {
+        if (!String(err.message || '').toLowerCase().includes('cancel')) {
+          toast('Gagal cetak BT: ' + err.message, 'error');
+        }
+        btn.disabled = false;
+        btn.textContent = state.btConnected ? '🟢 Cetak Thermal BT' : '🔴 Hubungkan & Cetak BT';
+      }
+    };
+
+    document.getElementById('btn-print-browser').onclick = () => {
+      document.getElementById('print-receipt-area').innerHTML = receiptHTML;
       window.print();
     };
 
@@ -1554,72 +1788,7 @@
   }
 
   // ==========================================================================
-  // VIEW 3: LAYAR BARISTA (KDS)
-  // ==========================================================================
-  function renderKDS() {
-    const active = (state.db.orders || []).filter(
-      (o) => o.status_dapur !== 'Selesai' && o.status_dapur !== 'Dibatalkan'
-    );
-
-    return `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <div>
-          <strong style="font-size:16px">Antrean Racik Barista & Kitchen</strong>
-          <div style="font-size:12.5px;color:var(--text-secondary)">${active.length} pesanan aktif menunggu disajikan</div>
-        </div>
-        <button class="btn btn-secondary btn-sm" id="btn-kds-refresh">${ICO.refresh} Segarkan Antrean</button>
-      </div>
-
-      <div class="kds-grid">
-        ${active.map((o) => {
-          const nextStatus = o.status_dapur === 'Menunggu' ? 'Diproses' : o.status_dapur === 'Diproses' ? 'Siap' : 'Selesai';
-          const nextLabel = o.status_dapur === 'Menunggu' ? '🔥 Mulai Racik' : o.status_dapur === 'Diproses' ? '✓ Siap Saji' : '✔ Selesai Diantar';
-          const badgeCls = o.status_dapur === 'Menunggu' ? 'badge-warning' : o.status_dapur === 'Diproses' ? 'badge-gold' : 'badge-success';
-
-          return `
-            <div class="kds-card status-${esc(o.status_dapur)}">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                <div>
-                  <div class="mono" style="font-weight:800;font-size:13.5px">${esc(o.no_invoice)}</div>
-                  <div style="font-size:12px;color:var(--text-secondary)">${esc(o.pelanggan)} • <strong>${esc(o.tipe_order)}</strong> ${o.meja !== '-' ? '• ' + esc(o.meja) : ''}</div>
-                </div>
-                <span class="badge ${badgeCls}">${esc(o.status_dapur)}</span>
-              </div>
-
-              <div class="kds-items">
-                ${(o.items || []).map((it) => `
-                  <div style="display:flex;gap:10px;align-items:flex-start">
-                    <span class="mono badge badge-gold" style="font-size:12px">${it.qty}x</span>
-                    <div>
-                      <div style="font-weight:700;font-size:13.5px">${esc(it.nama)}</div>
-                      ${it.varian ? `<div style="font-size:11.5px;color:var(--gold-400)">${esc(it.varian)}</div>` : ''}
-                      ${it.catatan ? `<div style="font-size:11.5px;color:var(--warning);font-style:italic">Catatan: ${esc(it.catatan)}</div>` : ''}
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
-
-              ${o.catatan ? `<div style="font-size:12px;color:var(--warning)">📝 ${esc(o.catatan)}</div>` : ''}
-
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:auto">
-                <span class="mono" style="font-size:11.5px;color:var(--text-muted)">🕒 ${esc(o.waktu)}</span>
-                <button class="btn btn-primary btn-sm" data-kds-next="${esc(o.id)}" data-kds-status="${nextStatus}">${nextLabel}</button>
-              </div>
-            </div>
-          `;
-        }).join('') || `
-          <div class="card empty-state" style="grid-column:1/-1">
-            <div class="empty-ico">☕</div>
-            <strong>Semua Pesanan Sudah Selesai!</strong>
-            <p style="font-size:12.5px;margin-top:4px">Pesanan baru dari Kasir POS akan muncul otomatis di sini.</p>
-          </div>
-        `}
-      </div>
-    `;
-  }
-
-  // ==========================================================================
-  // VIEW 4: DENAH MEJA CAFE
+  // VIEW 3: DENAH MEJA CAFE
   // ==========================================================================
   function renderTables() {
     const areas = [...new Set((state.db.tables || []).map((t) => t.area || 'Indoor AC'))];
@@ -1631,7 +1800,7 @@
           <span class="badge badge-warning">● Terisi: ${(state.db.tables || []).filter((t) => t.status === 'Terisi').length}</span>
           <span class="badge badge-info">● Reservasi: ${(state.db.tables || []).filter((t) => t.status === 'Reservasi').length}</span>
         </div>
-        <button class="btn btn-primary btn-sm" id="btn-add-table">+ Tambah Meja</button>
+        ${hasPerm('menu') ? `<button type="button" class="btn btn-primary btn-sm" id="btn-add-table">+ Tambah Meja</button>` : ''}
       </div>
 
       ${areas.map((area) => `
@@ -1658,6 +1827,20 @@
     `;
   }
 
+  function loadOpenBillToPOS(openOrder) {
+    state.orderType = openOrder.tipe_order || 'Dine-In';
+    state.selectedTable = openOrder.meja !== '-' ? openOrder.meja : '';
+    state.customerName = openOrder.pelanggan || '';
+    state.selectedMemberId = openOrder.member_id || '';
+    state.cart = JSON.parse(JSON.stringify(openOrder.items || []));
+    state.discount = Number(openOrder.diskon || 0);
+    state.orderNote = openOrder.catatan || '';
+    state.editingOrderId = openOrder.id;
+    closeModal();
+    setRoute('pos');
+    setTimeout(() => openCheckoutModal(false), 100);
+  }
+
   function openTableActionModal(tableId) {
     const t = (state.db.tables || []).find((x) => x.id === tableId);
     if (!t) return;
@@ -1671,17 +1854,17 @@
           <div class="modal-title">${esc(t.nama)}</div>
           <div style="font-size:12px;color:var(--text-secondary)">${esc(t.area)} • ${t.kapasitas} Kursi • Status: ${esc(t.status)}</div>
         </div>
-        <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px">
-        <button class="btn btn-primary btn-full" id="btn-table-new-order">☕ Buat Pesanan Dine-In di ${esc(t.nama)}</button>
+        <button type="button" class="btn btn-primary btn-full" id="btn-table-new-order">☕ Buat Pesanan Dine-In di ${esc(t.nama)}</button>
         ${openOrder ? `
-          <button class="btn btn-success btn-full" id="btn-table-pay-bill">💳 Bayar Open Bill (${esc(openOrder.no_invoice)} • ${fmtRp(openOrder.total)})</button>
+          <button type="button" class="btn btn-success btn-full" id="btn-table-pay-bill">💳 Bayar Open Bill (${esc(openOrder.no_invoice)} • ${fmtRp(openOrder.total)})</button>
         ` : ''}
         <div class="grid-3" style="margin-top:6px">
           ${['Tersedia', 'Terisi', 'Reservasi'].map((st) => `
-            <button class="btn btn-secondary btn-sm" data-set-table-status="${st}">${st}</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-set-table-status="${st}">${st}</button>
           `).join('')}
         </div>
       </div>
@@ -1696,18 +1879,7 @@
 
     const payBtn = document.getElementById('btn-table-pay-bill');
     if (payBtn && openOrder) {
-      payBtn.onclick = () => {
-        state.orderType = 'Dine-In';
-        state.selectedTable = t.nama;
-        state.customerName = openOrder.pelanggan;
-        state.cart = JSON.parse(JSON.stringify(openOrder.items || []));
-        state.discount = Number(openOrder.diskon || 0);
-        state.orderNote = openOrder.catatan || '';
-        state.editingOrderId = openOrder.id;
-        closeModal();
-        setRoute('pos');
-        setTimeout(() => openCheckoutModal(false), 120);
-      };
+      payBtn.onclick = () => loadOpenBillToPOS(openOrder);
     }
 
     document.querySelectorAll('[data-set-table-status]').forEach((b) => {
@@ -1724,7 +1896,7 @@
   }
 
   // ==========================================================================
-  // VIEW 5: KELOLA MENU & STOK
+  // VIEW 4: KELOLA MENU & STOK
   // ==========================================================================
   function renderMenuManager() {
     const q = state.menuSearch.trim().toLowerCase();
@@ -1738,7 +1910,7 @@
           ${ICO.search}
           <input id="menu-mgr-search" class="input" placeholder="Cari menu atau kategori..." value="${esc(state.menuSearch)}" />
         </div>
-        <button class="btn btn-primary" id="btn-add-menu">+ Tambah Menu Baru</button>
+        <button type="button" class="btn btn-primary" id="btn-add-menu">+ Tambah Menu Baru</button>
       </div>
 
       <div class="card">
@@ -1762,14 +1934,14 @@
                     <td class="mono text-success">${fmtRp(margin)}</td>
                     <td class="mono">${m.stok}</td>
                     <td>
-                      <button class="badge ${m.tersedia ? 'badge-success' : 'badge-danger'}" style="border:none;cursor:pointer" data-toggle-avail="${esc(m.id)}">
+                      <button type="button" class="badge ${m.tersedia ? 'badge-success' : 'badge-danger'}" style="border:none;cursor:pointer" data-toggle-avail="${esc(m.id)}">
                         ${m.tersedia ? 'Tersedia' : 'Habis'}
                       </button>
                     </td>
                     <td>
                       <div style="display:flex;gap:6px">
-                        <button class="btn btn-secondary btn-sm" data-edit-menu="${esc(m.id)}">Edit</button>
-                        <button class="btn btn-danger btn-sm" data-del-menu="${esc(m.id)}">Hapus</button>
+                        <button type="button" class="btn btn-secondary btn-sm" data-edit-menu="${esc(m.id)}">Edit</button>
+                        <button type="button" class="btn btn-danger btn-sm" data-del-menu="${esc(m.id)}">Hapus</button>
                       </div>
                     </td>
                   </tr>
@@ -1792,7 +1964,7 @@
     openModal(`
       <div class="modal-head">
         <div class="modal-title">${existing ? 'Edit Menu' : 'Tambah Menu Cafe'}</div>
-        <button class="btn btn-ghost btn-icon" data-close-modal>✕</button>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
       </div>
       <form id="menu-form">
         <div class="grid-2">
@@ -1808,9 +1980,9 @@
           </div>
         </div>
         <div class="grid-3">
-          <div class="field"><label>Harga Jual (Rp)</label><input name="harga" type="number" class="input mono" required value="${m.harga}" /></div>
-          <div class="field"><label>HPP Modal (Rp)</label><input name="hpp" type="number" class="input mono" value="${m.hpp}" /></div>
-          <div class="field"><label>Stok</label><input name="stok" type="number" class="input mono" value="${m.stok}" /></div>
+          <div class="field"><label>Harga Jual (Rp)</label><input name="harga" type="number" min="0" class="input mono" required value="${m.harga}" /></div>
+          <div class="field"><label>HPP Modal (Rp)</label><input name="hpp" type="number" min="0" class="input mono" value="${m.hpp}" /></div>
+          <div class="field"><label>Stok</label><input name="stok" type="number" min="0" class="input mono" value="${m.stok}" /></div>
         </div>
         <div class="field">
           <label>Varian (pisahkan grup dengan <code>|</code>, opsi dengan <code>,</code>, tambah harga pakai <code>(+8000)</code>)</label>
@@ -1821,7 +1993,7 @@
           <input name="deskripsi" class="input" value="${esc(m.deskripsi)}" />
         </div>
         <div class="field">
-          <label>URL Foto Menu (Opsional)</label>
+          <label>URL Foto Menu (Opsional, https://...)</label>
           <input name="foto_url" class="input" value="${esc(m.foto_url)}" placeholder="https://..." />
         </div>
         <div style="display:flex;gap:18px;margin-bottom:10px">
@@ -1843,12 +2015,12 @@
         kode: existing?.kode || ('MN-' + Math.floor(100 + Math.random() * 900)),
         nama: fd.get('nama').trim(),
         kategori: fd.get('kategori'),
-        harga: Number(fd.get('harga')),
-        hpp: Number(fd.get('hpp')),
-        stok: Number(fd.get('stok')),
+        harga: Math.max(0, Number(fd.get('harga'))),
+        hpp: Math.max(0, Number(fd.get('hpp'))),
+        stok: Math.max(0, Number(fd.get('stok'))),
         varian: fd.get('varian').trim(),
         deskripsi: fd.get('deskripsi').trim(),
-        foto_url: fd.get('foto_url').trim(),
+        foto_url: safeUrl(fd.get('foto_url').trim()),
         tersedia: fd.get('tersedia') === 'on',
         favorit: fd.get('favorit') === 'on'
       };
@@ -1867,7 +2039,7 @@
   }
 
   // ==========================================================================
-  // VIEW 6: RIWAYAT TRANSAKSI
+  // VIEW 5: RIWAYAT TRANSAKSI
   // ==========================================================================
   function renderHistory() {
     const q = state.txSearch.trim().toLowerCase();
@@ -1876,6 +2048,8 @@
       if (q && !(o.no_invoice.toLowerCase().includes(q) || (o.pelanggan || '').toLowerCase().includes(q))) return false;
       return true;
     });
+
+    const canVoid = hasPerm('void_order');
 
     return `
       <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap">
@@ -1886,7 +2060,7 @@
           </div>
           <input id="tx-date" type="date" class="input" style="max-width:175px" value="${esc(state.txDate)}" />
         </div>
-        <button class="btn btn-secondary btn-sm" id="btn-export-orders">⬇ Export CSV</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-export-orders">⬇ Export CSV</button>
       </div>
 
       <div class="card">
@@ -1907,9 +2081,10 @@
                     <span class="badge ${o.status_bayar === 'Lunas' ? 'badge-success' : o.status_bayar === 'Open Bill' ? 'badge-warning' : 'badge-danger'}">${esc(o.status_bayar)}</span>
                   </td>
                   <td>
-                    <div style="display:flex;gap:6px">
-                      <button class="btn btn-secondary btn-sm" data-view-receipt="${esc(o.id)}">Struk</button>
-                      ${o.status_bayar !== 'Dibatalkan' && state.user?.role === 'Owner' ? `<button class="btn btn-danger btn-sm" data-void-order="${esc(o.id)}">Void</button>` : ''}
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                      ${o.status_bayar === 'Open Bill' ? `<button type="button" class="btn btn-primary btn-sm" data-pay-openbill="${esc(o.id)}">Bayar</button>` : ''}
+                      <button type="button" class="btn btn-secondary btn-sm" data-view-receipt="${esc(o.id)}">Struk</button>
+                      ${o.status_bayar !== 'Dibatalkan' && canVoid ? `<button type="button" class="btn btn-danger btn-sm" data-void-order="${esc(o.id)}">Void</button>` : ''}
                     </div>
                   </td>
                 </tr>
@@ -1922,7 +2097,7 @@
   }
 
   // ==========================================================================
-  // VIEW 7: KEUANGAN, SHIFT KASIR & LABA RUGI
+  // VIEW 6: KEUANGAN, SHIFT KASIR & LABA RUGI
   // ==========================================================================
   function renderFinance() {
     const validOrders = (state.db.orders || []).filter((o) => o.status_bayar === 'Lunas');
@@ -1965,7 +2140,7 @@
               <div class="card-title">Pengeluaran Operasional Cafe</div>
               <div class="card-subtitle">Biji kopi, susu, listrik, gaji, kemasan, dll</div>
             </div>
-            <button class="btn btn-primary btn-sm" id="btn-add-expense">+ Catat Pengeluaran</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btn-add-expense">+ Catat Pengeluaran</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -1977,7 +2152,7 @@
                     <td><span class="badge badge-gold">${esc(x.kategori)}</span></td>
                     <td><strong>${esc(x.deskripsi)}</strong><br/><span style="font-size:11px;color:var(--text-muted)">${esc(x.metode)} • ${esc(x.dicatat_oleh)}</span></td>
                     <td class="mono text-danger" style="font-weight:700">${fmtRp(x.nominal)}</td>
-                    <td><button class="btn btn-danger btn-sm" data-del-expense="${esc(x.id)}">Hapus</button></td>
+                    <td><button type="button" class="btn btn-danger btn-sm" data-del-expense="${esc(x.id)}">Hapus</button></td>
                   </tr>
                 `).join('') || `<tr><td colspan="5" class="empty-state">Belum ada catatan pengeluaran.</td></tr>`}
               </tbody>
@@ -1998,19 +2173,22 @@
               <div style="font-size:13px">Kasir: <strong>${esc(openShift.kasir)}</strong></div>
               <div style="font-size:12px;color:var(--text-secondary)">Dibuka: ${esc(openShift.buka_waktu)}</div>
               <div style="font-size:13px;margin-top:6px">Modal Awal: <strong class="mono text-gold">${fmtRp(openShift.modal_awal)}</strong></div>
-              <button class="btn btn-danger btn-full" style="margin-top:12px" id="btn-close-shift">Tutup Shift & Hitung Kas</button>
+              <button type="button" class="btn btn-danger btn-full" style="margin-top:12px" id="btn-close-shift">Tutup Shift & Hitung Kas</button>
             </div>
           ` : `
             <div class="empty-state" style="padding:18px 0">
               <p style="margin-bottom:12px">Belum ada shift kasir yang dibuka saat ini.</p>
-              <button class="btn btn-primary btn-full" id="btn-open-shift">Buka Shift Kasir Baru</button>
+              <button type="button" class="btn btn-primary btn-full" id="btn-open-shift">Buka Shift Kasir Baru</button>
             </div>
           `}
           <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
             ${(state.db.shifts || []).filter((s) => s.status === 'Tutup').slice().reverse().slice(0, 4).map((s) => `
-              <div style="padding:10px;border-radius:12px;background:var(--bg-elevated);font-size:12px">
-                <div style="display:flex;justify-content:space-between"><strong>${esc(s.kasir)}</strong><span class="mono ${s.selisih === 0 ? 'text-success' : 'text-warning'}">Selisih: ${fmtRp(s.selisih)}</span></div>
-                <div class="text-muted">Tunai: ${fmtRp(s.total_tunai)} • Non-Tunai: ${fmtRp(s.total_non_tunai)}</div>
+              <div style="padding:10px;border-radius:12px;background:var(--bg-elevated);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div>
+                  <strong>${esc(s.kasir)}</strong> • <span class="mono ${s.selisih === 0 ? 'text-success' : 'text-warning'}">Selisih: ${fmtRp(s.selisih)}</span>
+                  <div class="text-muted">Tunai: ${fmtRp(s.total_tunai)} • Non-Tunai: ${fmtRp(s.total_non_tunai)}</div>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" data-print-shift="${esc(s.id)}">🖨 BT</button>
               </div>
             `).join('')}
           </div>
@@ -2020,13 +2198,13 @@
   }
 
   // ==========================================================================
-  // VIEW 8: MEMBER & LOYALITAS
+  // VIEW 7: MEMBER & LOYALITAS
   // ==========================================================================
   function renderMembers() {
     return `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div class="text-muted">Otomatis mengumpulkan 1 poin setiap transaksi Rp 10.000</div>
-        <button class="btn btn-primary btn-sm" id="btn-add-member">+ Tambah Member</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-add-member">+ Tambah Member</button>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -2041,7 +2219,7 @@
                   <td class="mono text-gold" style="font-weight:700">${m.poin} pt</td>
                   <td class="mono">${fmtRp(m.total_belanja)}</td>
                   <td class="mono">${m.kunjungan}x</td>
-                  <td><button class="btn btn-danger btn-sm" data-del-member="${esc(m.id)}">Hapus</button></td>
+                  <td><button type="button" class="btn btn-danger btn-sm" data-del-member="${esc(m.id)}">Hapus</button></td>
                 </tr>
               `).join('') || `<tr><td colspan="7" class="empty-state">Belum ada member terdaftar.</td></tr>`}
             </tbody>
@@ -2052,11 +2230,12 @@
   }
 
   // ==========================================================================
-  // VIEW 9: PENGATURAN, GOOGLE SHEETS, USER & SYSTEM AUTO-UPDATE
+  // VIEW 8: PENGATURAN, ROLE MANAGEMENT, STAFF & INTEGRASI AMAN (NO APPS SCRIPT LINK!)
   // ==========================================================================
   function renderSettings() {
     const s = state.db.settings || CFG.DEFAULT_SETTINGS;
     const connected = API.isConnected();
+    const canManageStaff = hasPerm('manage_staff');
 
     return `
       <div class="dash-grid">
@@ -2064,12 +2243,12 @@
           <div class="card-header">
             <div>
               <div class="card-title">Profil Cafe & Struk Thermal</div>
-              <div class="card-subtitle">Tampil di header aplikasi dan struk belanja</div>
+              <div class="card-subtitle">Tampil di header aplikasi dan cetakan struk Bluetooth</div>
             </div>
           </div>
           <form id="settings-form">
             <div class="grid-2">
-              <div class="field"><label>Nama Cafe</label><input name="cafe_name" class="input" value="${esc(s.cafe_name)}" /></div>
+              <div class="field"><label>Nama Cafe</label><input name="cafe_name" class="input" value="${esc(s.cafe_name)}" required /></div>
               <div class="field"><label>Tagline</label><input name="tagline" class="input" value="${esc(s.tagline)}" /></div>
             </div>
             <div class="field"><label>Alamat Cafe</label><input name="address" class="input" value="${esc(s.address)}" /></div>
@@ -2077,9 +2256,16 @@
               <div class="field"><label>No. Telepon / WA</label><input name="phone" class="input" value="${esc(s.phone)}" /></div>
               <div class="field"><label>Instagram</label><input name="instagram" class="input" value="${esc(s.instagram)}" /></div>
             </div>
-            <div class="grid-2">
-              <div class="field"><label>Pajak PB1 (%)</label><input name="tax_percent" type="number" class="input mono" value="${s.tax_percent}" /></div>
-              <div class="field"><label>Service Charge (%)</label><input name="service_percent" type="number" class="input mono" value="${s.service_percent}" /></div>
+            <div class="grid-3">
+              <div class="field"><label>Pajak PB1 (%)</label><input name="tax_percent" type="number" min="0" max="100" class="input mono" value="${s.tax_percent}" /></div>
+              <div class="field"><label>Service (%)</label><input name="service_percent" type="number" min="0" max="100" class="input mono" value="${s.service_percent}" /></div>
+              <div class="field">
+                <label>Kertas Struk</label>
+                <select name="paper_size" class="select">
+                  <option value="58mm" ${(s.paper_size || '58mm') === '58mm' ? 'selected' : ''}>58mm</option>
+                  <option value="80mm" ${s.paper_size === '80mm' ? 'selected' : ''}>80mm</option>
+                </select>
+              </div>
             </div>
             <div class="field"><label>Catatan Footer Struk</label><textarea name="receipt_footer" class="textarea">${esc(s.receipt_footer)}</textarea></div>
             <button type="submit" class="btn btn-primary">Simpan Pengaturan</button>
@@ -2087,81 +2273,258 @@
         </div>
 
         <div style="display:flex;flex-direction:column;gap:18px">
+          <!-- INTEGRASI GOOGLE SHEETS (AMAN: TANPA LINK APPS SCRIPT!) -->
           <div class="card">
             <div class="card-header">
               <div>
-                <div class="card-title">Integrasi Google Sheets & Apps Script</div>
-                <div class="card-subtitle">${connected ? 'Terhubung real-time' : 'Belum dihubungkan'}</div>
+                <div class="card-title">Sinkronisasi Google Sheets</div>
+                <div class="card-subtitle">${connected ? 'Terhubung real-time ke database' : 'Mode Lokal (belum dihubungkan)'}</div>
               </div>
               <span class="badge ${connected ? 'badge-success' : 'badge-warning'}">${connected ? '● Online' : '○ Lokal'}</span>
             </div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
-              Spreadsheet ID: <span class="mono text-gold">${esc(CFG.SPREADSHEET_ID)}</span><br/>
-              Apps Script ID: <span class="mono">${esc(CFG.APPS_SCRIPT_ID)}</span>
-            </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
-              <button class="btn btn-primary btn-sm" id="btn-set-gas-modal">⚙ Atur URL Web App GAS</button>
-              <button class="btn btn-secondary btn-sm" id="btn-generate-sheets" ${!connected ? 'disabled' : ''}>✨ Generate Header & Sheet Otomatis</button>
-              <button class="btn btn-secondary btn-sm" id="btn-sync-now" ${!connected ? 'disabled' : ''}>↻ Sinkronkan Sekarang</button>
-              <a class="btn btn-ghost btn-sm" href="${esc(CFG.SPREADSHEET_URL)}" target="_blank">Buka Spreadsheet ↗</a>
-              <a class="btn btn-ghost btn-sm" href="${esc(CFG.APPS_SCRIPT_URL)}" target="_blank">Buka Apps Script ↗</a>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-set-gas-modal">⚙ Atur Endpoint Server</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-generate-sheets" ${!connected ? 'disabled' : ''}>✨ Generate Header & Sheet Otomatis</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-sync-now" ${!connected ? 'disabled' : ''}>↻ Sinkronkan Sekarang</button>
             </div>
           </div>
 
+          <!-- PRINTER THERMAL BLUETOOTH & PWA UPDATE -->
           <div class="card">
             <div class="card-header">
               <div>
-                <div class="card-title">Sistem PWA & Auto-Update</div>
+                <div class="card-title">Printer Bluetooth & Auto-Update PWA</div>
                 <div class="card-subtitle">Versi aktif: <span class="mono text-gold">v${esc(CFG.APP_VERSION)} (${esc(CFG.APP_BUILD)})</span></div>
               </div>
+              <span class="badge ${state.btConnected ? 'badge-success' : 'badge-danger'}">${state.btConnected ? 'BT Hijau' : 'BT Merah'}</span>
             </div>
-            <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">
-              Setiap kali ada perbaikan yang di-push ke GitHub, Service Worker otomatis mendeteksi versi baru, menampilkan animasi loading update, dan memperbarui aplikasi secara otomatis di PC maupun HP.
-            </p>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
-              <button class="btn btn-primary btn-sm" id="btn-check-update-settings">${ICO.refresh} Cek & Terapkan Update</button>
-              <button class="btn btn-secondary btn-sm" id="btn-install-pc-settings">⬇ Install di PC</button>
-              <button class="btn btn-secondary btn-sm" id="btn-install-hp-settings">⬇ Install di HP</button>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-open-bt-settings">🔵 Pengaturan Printer BT</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-check-update-settings">${ICO.refresh} Cek & Terapkan Update</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-install-pc-settings">⬇ Install PC</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-install-hp-settings">⬇ Install HP</button>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Akun Staff Cafe</div>
-                <div class="card-subtitle">Owner, Kasir & Barista</div>
-              </div>
-              <button class="btn btn-secondary btn-sm" id="btn-add-user">+ Staff</button>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:8px">
-              ${(state.db.users || []).map((u) => `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:12px;background:var(--bg-elevated)">
-                  <div>
-                    <strong>${esc(u.nama)}</strong> <span class="badge badge-gold" style="margin-left:6px">${esc(u.role)}</span>
-                    <div style="font-size:11.5px;color:var(--text-muted)">User: ${esc(u.username)} • PIN: ${esc(u.pin)}</div>
-                  </div>
-                  ${u.username !== 'owner' ? `<button class="btn btn-danger btn-sm" data-del-user="${esc(u.id)}">Hapus</button>` : ''}
+          ${canManageStaff ? `
+            <!-- MANAJEMEN ROLE & HAK AKSES -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Manajemen Role & Hak Akses</div>
+                  <div class="card-subtitle">Atur peran kasir, supervisor, atau tambah role custom</div>
                 </div>
-              `).join('')}
+                <button type="button" class="btn btn-primary btn-sm" id="btn-add-role">+ Tambah Role</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                ${(state.db.roles || []).map((r) => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 12px;border-radius:12px;background:var(--bg-elevated);border:1px solid var(--border-subtle)">
+                    <div style="min-width:0">
+                      <strong>${esc(r.nama)}</strong>
+                      <span class="badge badge-gold" style="margin-left:6px">${(r.akses || []).length} izin</span>
+                      <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">${esc(r.deskripsi || 'Role akses kasir')}</div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0">
+                      ${String(r.nama).toLowerCase() !== 'owner' ? `<button type="button" class="btn btn-secondary btn-sm" data-edit-role="${esc(r.id)}">Edit</button>` : `<span class="badge badge-success">Penuh</span>`}
+                      ${!r.is_system ? `<button type="button" class="btn btn-danger btn-sm" data-del-role="${esc(r.id)}">Hapus</button>` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
             </div>
-          </div>
+
+            <!-- AKUN STAFF CAFE -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Akun Staff Kasir</div>
+                  <div class="card-subtitle">Kelola username, password, PIN & role staff</div>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-add-user">+ Tambah Staff</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                ${(state.db.users || []).map((u) => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--bg-elevated);border:1px solid var(--border-subtle)">
+                    <div style="min-width:0">
+                      <strong>${esc(u.nama)}</strong>
+                      <span class="badge badge-gold" style="margin-left:6px">${esc(u.role)}</span>
+                      ${u.aktif === false ? `<span class="badge badge-danger" style="margin-left:4px">Nonaktif</span>` : ''}
+                      <div style="font-size:11.5px;color:var(--text-muted)">User: ${esc(u.username)} • PIN: ••••</div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0">
+                      <button type="button" class="btn btn-secondary btn-sm" data-edit-user="${esc(u.id)}">Edit</button>
+                      ${u.username !== 'owner' ? `<button type="button" class="btn btn-danger btn-sm" data-del-user="${esc(u.id)}">Hapus</button>` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
+  }
+
+  function openRoleFormModal(roleId = null) {
+    const existing = roleId ? (state.db.roles || []).find((r) => r.id === roleId) : null;
+    const r = existing || { id: '', nama: '', deskripsi: '', akses: ['dashboard', 'pos', 'tables', 'history'], is_system: false };
+
+    openModal(`
+      <div class="modal-head">
+        <div class="modal-title">${existing ? 'Edit Role Akses' : 'Tambah Role Baru'}</div>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
+      </div>
+      <form id="role-form">
+        <div class="field">
+          <label>Nama Role</label>
+          <input name="nama" class="input" required value="${esc(r.nama)}" placeholder="Misal: Head Kasir, Shift Leader, Admin" ${r.is_system ? 'readonly' : ''} />
+        </div>
+        <div class="field">
+          <label>Deskripsi Singkat</label>
+          <input name="deskripsi" class="input" value="${esc(r.deskripsi)}" placeholder="Tugas dan cakupan akses role ini..." />
+        </div>
+        <div class="field">
+          <label>Hak Akses Menu & Fitur</label>
+          <div class="perm-grid">
+            ${CFG.ALL_PERMISSIONS.map((p) => `
+              <label class="perm-item">
+                <input type="checkbox" name="akses" value="${p.key}" ${(r.akses || []).includes(p.key) ? 'checked' : ''} />
+                <span>${esc(p.label)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="submit" class="btn btn-primary">Simpan Role</button>
+        </div>
+      </form>
+    `);
+
+    document.getElementById('role-form').onsubmit = (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const nama = fd.get('nama').trim();
+      const akses = fd.getAll('akses');
+      if (!nama) { toast('Nama role wajib diisi!', 'error'); return; }
+      if (!akses.length) { toast('Pilih minimal 1 hak akses!', 'error'); return; }
+
+      const dup = (state.db.roles || []).find(
+        (x) => x.nama.toLowerCase() === nama.toLowerCase() && x.id !== (existing?.id || '')
+      );
+      if (dup) { toast('Nama role sudah ada!', 'error'); return; }
+
+      const roleObj = {
+        id: existing ? existing.id : ('ROL-' + Date.now()),
+        nama,
+        deskripsi: fd.get('deskripsi').trim(),
+        akses,
+        is_system: Boolean(existing?.is_system)
+      };
+
+      if (existing) {
+        const idx = state.db.roles.findIndex((x) => x.id === existing.id);
+        state.db.roles[idx] = roleObj;
+      } else {
+        state.db.roles.push(roleObj);
+      }
+
+      API.saveLocal(state.db);
+      API.sendAction('saveRole', roleObj);
+      closeModal();
+      toast(`Role "${nama}" berhasil disimpan!`, 'success');
+      render();
+    };
+  }
+
+  function openUserFormModal(userId = null) {
+    const existing = userId ? (state.db.users || []).find((u) => u.id === userId) : null;
+    const u = existing || { id: '', nama: '', role: 'Kasir', username: '', password: '', pin: '', aktif: true };
+    const roleList = state.db.roles || CFG.DEFAULT_ROLES;
+
+    openModal(`
+      <div class="modal-head">
+        <div class="modal-title">${existing ? 'Edit Akun Staff' : 'Tambah Akun Staff'}</div>
+        <button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button>
+      </div>
+      <form id="user-form">
+        <div class="grid-2">
+          <div class="field"><label>Nama Lengkap</label><input name="nama" class="input" required value="${esc(u.nama)}" placeholder="Nama staff kasir" /></div>
+          <div class="field">
+            <label>Role</label>
+            <select name="role" class="select" ${u.username === 'owner' ? 'disabled' : ''}>
+              ${roleList.map((r) => `<option value="${esc(r.nama)}" ${u.role === r.nama ? 'selected' : ''}>${esc(r.nama)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="field"><label>Username</label><input name="username" class="input" required value="${esc(u.username)}" ${u.username === 'owner' ? 'readonly' : ''} placeholder="kasir2" /></div>
+          <div class="field"><label>Password</label><input name="password" type="password" class="input" required value="${esc(u.password)}" placeholder="Min. 4 karakter" /></div>
+          <div class="field"><label>PIN 4 Digit</label><input name="pin" maxlength="4" pattern="\\d{4}" class="input mono" required value="${esc(u.pin)}" placeholder="4444" /></div>
+        </div>
+        ${u.username !== 'owner' ? `
+          <label class="perm-item" style="margin-bottom:10px;width:fit-content">
+            <input type="checkbox" name="aktif" ${u.aktif !== false ? 'checked' : ''} />
+            <span>Akun Aktif</span>
+          </label>
+        ` : ''}
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="submit" class="btn btn-primary">Simpan</button>
+        </div>
+      </form>
+    `);
+
+    document.getElementById('user-form').onsubmit = (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const username = fd.get('username').trim().toLowerCase();
+      const password = fd.get('password').trim();
+      const pin = fd.get('pin').trim();
+      const role = u.username === 'owner' ? 'Owner' : fd.get('role');
+
+      if (password.length < 4) { toast('Password minimal 4 karakter!', 'error'); return; }
+      if (!/^\d{4}$/.test(pin)) { toast('PIN harus tepat 4 digit angka!', 'error'); return; }
+
+      const dupUser = (state.db.users || []).find((x) => x.username.toLowerCase() === username && x.id !== (existing?.id || ''));
+      if (dupUser) { toast('Username sudah digunakan staff lain!', 'error'); return; }
+
+      const dupPin = (state.db.users || []).find((x) => String(x.pin) === pin && x.id !== (existing?.id || ''));
+      if (dupPin) { toast('PIN 4 digit sudah digunakan staff lain!', 'error'); return; }
+
+      const usr = {
+        id: existing ? existing.id : ('USR-' + Date.now()),
+        nama: fd.get('nama').trim(),
+        role,
+        username,
+        password,
+        pin,
+        aktif: u.username === 'owner' ? true : fd.get('aktif') === 'on'
+      };
+
+      if (existing) {
+        const idx = state.db.users.findIndex((x) => x.id === existing.id);
+        state.db.users[idx] = usr;
+      } else {
+        state.db.users.push(usr);
+      }
+
+      API.saveLocal(state.db);
+      API.sendAction('saveUser', usr);
+      closeModal();
+      toast(existing ? 'Data staff diperbarui!' : 'Akun staff ditambahkan!', 'success');
+      render();
+    };
   }
 
   // ==========================================================================
   // EVENT BINDING AFTER RENDER
   // ==========================================================================
   function bindEvents() {
-    document.querySelectorAll('[data-close-modal]').forEach((b) => { b.onclick = closeModal; });
-
-    // Login events
     if (!state.user) {
       document.getElementById('btn-theme-login')?.addEventListener('click', toggleTheme);
       document.getElementById('btn-download-pc')?.addEventListener('click', () => handleInstallDevice('PC'));
       document.getElementById('btn-download-hp')?.addEventListener('click', () => handleInstallDevice('HP'));
-      document.getElementById('btn-open-gas-login')?.addEventListener('click', openGasSetupModal);
       document.getElementById('btn-check-update-login')?.addEventListener('click', manualCheckUpdate);
 
       document.querySelectorAll('[data-login-mode]').forEach((b) => {
@@ -2169,13 +2532,6 @@
           state.loginMode = b.dataset.loginMode;
           state.pinBuffer = '';
           render();
-        };
-      });
-
-      document.querySelectorAll('[data-fill-user]').forEach((b) => {
-        b.onclick = () => {
-          document.getElementById('login-username').value = b.dataset.fillUser;
-          document.getElementById('login-password').value = b.dataset.fillPass;
         };
       });
 
@@ -2187,11 +2543,11 @@
           (x) => String(x.username).toLowerCase() === u && String(x.password) === p && x.aktif !== false
         );
         if (!found) {
-          toast('Username atau password salah!', 'error');
+          toast('Username atau kata sandi salah, atau akun nonaktif.', 'error');
           return;
         }
         saveSessionUser({ id: found.id, username: found.username, nama: found.nama, role: found.role });
-        state.route = found.role === 'Barista' ? 'kds' : found.role === 'Kasir' ? 'pos' : 'dashboard';
+        state.route = found.role === 'Kasir' ? 'pos' : getFirstAllowedRoute();
         toast(`Selamat datang, ${found.nama}!`, 'success');
         render();
         syncCloud(true);
@@ -2209,13 +2565,13 @@
             if (found) {
               saveSessionUser({ id: found.id, username: found.username, nama: found.nama, role: found.role });
               state.pinBuffer = '';
-              state.route = found.role === 'Barista' ? 'kds' : found.role === 'Kasir' ? 'pos' : 'dashboard';
+              state.route = found.role === 'Kasir' ? 'pos' : getFirstAllowedRoute();
               toast(`Selamat datang, ${found.nama}!`, 'success');
               render();
               syncCloud(true);
               return;
             } else {
-              toast('PIN tidak ditemukan!', 'error');
+              toast('PIN tidak valid atau akun nonaktif!', 'error');
               state.pinBuffer = '';
             }
           }
@@ -2243,23 +2599,31 @@
       render();
     });
     document.getElementById('btn-theme-top')?.addEventListener('click', toggleTheme);
+    document.getElementById('btn-bt-status')?.addEventListener('click', openBluetoothModal);
     document.getElementById('btn-sync-cloud')?.addEventListener('click', () => {
       if (API.isConnected()) syncCloud(false);
-      else openGasSetupModal();
+      else if (hasPerm('settings')) openGasSetupModal();
+      else toast('Mode Lokal aktif. Hubungi Owner untuk sinkronisasi server.', 'info');
     });
     document.getElementById('btn-check-update-top')?.addEventListener('click', manualCheckUpdate);
     document.getElementById('btn-install-sidebar')?.addEventListener('click', () => {
       handleInstallDevice(window.innerWidth > 900 ? 'PC' : 'HP');
     });
 
-    // Dashboard CTA
+    // Dashboard
     document.getElementById('btn-dash-connect-gas')?.addEventListener('click', openGasSetupModal);
 
     // POS events
     if (state.route === 'pos') {
       const sInput = document.getElementById('pos-search-input');
       if (sInput) {
-        sInput.oninput = (e) => { state.posSearch = e.target.value; render(); const el = document.getElementById('pos-search-input'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
+        sInput.oninput = (e) => {
+          state.posSearch = e.target.value;
+          const pos = e.target.selectionStart;
+          render();
+          const el = document.getElementById('pos-search-input');
+          if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} }
+        };
       }
       document.querySelectorAll('[data-pos-cat]').forEach((b) => {
         b.onclick = () => { state.posCategory = b.dataset.posCat; render(); };
@@ -2275,9 +2639,18 @@
       document.getElementById('cart-member')?.addEventListener('change', (e) => {
         state.selectedMemberId = e.target.value;
         const m = state.db.members.find((x) => x.id === e.target.value);
-        if (m && !state.customerName) { state.customerName = m.nama; render(); }
+        if (m && !state.customerName) {
+          state.customerName = m.nama;
+          const custEl = document.getElementById('cart-customer');
+          if (custEl) custEl.value = m.nama;
+        }
       });
-      document.getElementById('cart-discount')?.addEventListener('input', (e) => { state.discount = Number(e.target.value) || 0; render(); const el = document.getElementById('cart-discount'); if (el) el.focus(); });
+      // Update total langsung tanpa re-render penuh agar keyboard tidak hilang fokus!
+      document.getElementById('cart-discount')?.addEventListener('input', (e) => {
+        state.discount = Math.max(0, Number(e.target.value) || 0);
+        const box = document.getElementById('cart-totals-box');
+        if (box) box.innerHTML = renderCartTotalsHTML(calcCartTotals());
+      });
       document.getElementById('cart-note')?.addEventListener('input', (e) => { state.orderNote = e.target.value; });
 
       document.querySelectorAll('[data-qty-inc]').forEach((b) => {
@@ -2292,32 +2665,12 @@
         };
       });
       document.getElementById('btn-clear-cart')?.addEventListener('click', () => {
-        state.cart = []; state.editingOrderId = null; render();
+        state.cart = []; state.editingOrderId = null; state.discount = 0; render();
       });
       document.getElementById('btn-open-bill')?.addEventListener('click', () => openCheckoutModal(true));
       document.getElementById('btn-checkout')?.addEventListener('click', () => openCheckoutModal(false));
       document.getElementById('btn-open-mobile-cart')?.addEventListener('click', () => { state.mobileCartOpen = true; render(); });
       document.getElementById('btn-close-mobile-cart')?.addEventListener('click', () => { state.mobileCartOpen = false; render(); });
-    }
-
-    // KDS events
-    if (state.route === 'kds') {
-      document.getElementById('btn-kds-refresh')?.addEventListener('click', () => syncCloud(false));
-      document.querySelectorAll('[data-kds-next]').forEach((b) => {
-        b.onclick = () => {
-          const ord = state.db.orders.find((o) => o.id === b.dataset.kdsNext);
-          if (!ord) return;
-          ord.status_dapur = b.dataset.kdsStatus;
-          if (ord.status_dapur === 'Selesai' && ord.status_bayar === 'Lunas' && ord.meja !== '-') {
-            const tbl = state.db.tables.find((t) => t.nama === ord.meja);
-            if (tbl) { tbl.status = 'Tersedia'; tbl.order_aktif = ''; }
-          }
-          API.saveLocal(state.db);
-          API.sendAction('updateOrderStatus', { id: ord.id, status_dapur: ord.status_dapur });
-          toast(`Pesanan ${ord.no_invoice} → ${ord.status_dapur}`, 'success');
-          render();
-        };
-      });
     }
 
     // Tables events
@@ -2327,7 +2680,7 @@
       });
       document.getElementById('btn-add-table')?.addEventListener('click', () => {
         openModal(`
-          <div class="modal-head"><div class="modal-title">Tambah Meja Baru</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
+          <div class="modal-head"><div class="modal-title">Tambah Meja Baru</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
           <form id="table-form">
             <div class="grid-2">
               <div class="field"><label>Nomor</label><input name="nomor" class="input" required placeholder="11" /></div>
@@ -2335,7 +2688,7 @@
             </div>
             <div class="grid-2">
               <div class="field"><label>Area</label><select name="area" class="select"><option>Indoor AC</option><option>Outdoor Garden</option><option>Coffee Bar</option><option>VIP Lounge</option></select></div>
-              <div class="field"><label>Kapasitas Kursi</label><input name="kapasitas" type="number" class="input" value="4" /></div>
+              <div class="field"><label>Kapasitas Kursi</label><input name="kapasitas" type="number" min="1" class="input" value="4" /></div>
             </div>
             <div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-modal>Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div>
           </form>
@@ -2343,7 +2696,7 @@
         document.getElementById('table-form').onsubmit = (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
-          const tbl = { id: 'TBL-' + Date.now(), nomor: fd.get('nomor'), nama: fd.get('nama'), area: fd.get('area'), kapasitas: Number(fd.get('kapasitas')), status: 'Tersedia', order_aktif: '' };
+          const tbl = { id: 'TBL-' + Date.now(), nomor: fd.get('nomor').trim(), nama: fd.get('nama').trim(), area: fd.get('area'), kapasitas: Math.max(1, Number(fd.get('kapasitas'))), status: 'Tersedia', order_aktif: '' };
           state.db.tables.push(tbl);
           API.saveLocal(state.db);
           API.sendAction('saveTable', tbl);
@@ -2354,7 +2707,13 @@
 
     // Menu manager events
     if (state.route === 'menu') {
-      document.getElementById('menu-mgr-search')?.addEventListener('input', (e) => { state.menuSearch = e.target.value; render(); const el = document.getElementById('menu-mgr-search'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
+      document.getElementById('menu-mgr-search')?.addEventListener('input', (e) => {
+        state.menuSearch = e.target.value;
+        const pos = e.target.selectionStart;
+        render();
+        const el = document.getElementById('menu-mgr-search');
+        if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} }
+      });
       document.getElementById('btn-add-menu')?.addEventListener('click', () => openMenuFormModal());
       document.querySelectorAll('[data-edit-menu]').forEach((b) => { b.onclick = () => openMenuFormModal(b.dataset.editMenu); });
       document.querySelectorAll('[data-toggle-avail]').forEach((b) => {
@@ -2382,8 +2741,20 @@
 
     // History events
     if (state.route === 'history') {
-      document.getElementById('tx-search')?.addEventListener('input', (e) => { state.txSearch = e.target.value; render(); const el = document.getElementById('tx-search'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
+      document.getElementById('tx-search')?.addEventListener('input', (e) => {
+        state.txSearch = e.target.value;
+        const pos = e.target.selectionStart;
+        render();
+        const el = document.getElementById('tx-search');
+        if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} }
+      });
       document.getElementById('tx-date')?.addEventListener('change', (e) => { state.txDate = e.target.value; render(); });
+      document.querySelectorAll('[data-pay-openbill]').forEach((b) => {
+        b.onclick = () => {
+          const ord = state.db.orders.find((o) => o.id === b.dataset.payOpenbill);
+          if (ord) loadOpenBillToPOS(ord);
+        };
+      });
       document.querySelectorAll('[data-view-receipt]').forEach((b) => {
         b.onclick = () => {
           const ord = state.db.orders.find((o) => o.id === b.dataset.viewReceipt);
@@ -2392,14 +2763,27 @@
       });
       document.querySelectorAll('[data-void-order]').forEach((b) => {
         b.onclick = () => {
-          if (!confirm('Batalkan (Void) transaksi ini?')) return;
+          if (!hasPerm('void_order')) { toast('Tidak memiliki izin Void!', 'error'); return; }
+          if (!confirm('Batalkan (Void) transaksi ini? Stok menu & meja akan dikembalikan otomatis.')) return;
           const ord = state.db.orders.find((o) => o.id === b.dataset.voidOrder);
-          if (!ord) return;
+          if (!ord || ord.status_bayar === 'Dibatalkan') return;
           ord.status_bayar = 'Dibatalkan';
-          ord.status_dapur = 'Dibatalkan';
+          // Kembalikan stok menu lokal
+          (ord.items || []).forEach((it) => {
+            const m = state.db.menu.find((x) => x.id === it.menu_id);
+            if (m) m.stok = Number(m.stok || 0) + Number(it.qty || 1);
+          });
+          // Bebaskan meja jika sedang memakai meja
+          if (ord.meja && ord.meja !== '-') {
+            const tbl = state.db.tables.find((t) => t.nama === ord.meja);
+            if (tbl && tbl.order_aktif === ord.no_invoice) {
+              tbl.status = 'Tersedia';
+              tbl.order_aktif = '';
+            }
+          }
           API.saveLocal(state.db);
           API.sendAction('voidOrder', { id: ord.id });
-          toast('Transaksi dibatalkan.', 'info');
+          toast('Transaksi dibatalkan & stok dikembalikan.', 'info');
           render();
         };
       });
@@ -2414,7 +2798,7 @@
     if (state.route === 'finance') {
       document.getElementById('btn-add-expense')?.addEventListener('click', () => {
         openModal(`
-          <div class="modal-head"><div class="modal-title">Catat Pengeluaran Cafe</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
+          <div class="modal-head"><div class="modal-title">Catat Pengeluaran Cafe</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
           <form id="exp-form">
             <div class="grid-2">
               <div class="field"><label>Tanggal</label><input name="tanggal" type="date" class="input" value="${todayISO()}" required /></div>
@@ -2422,7 +2806,7 @@
             </div>
             <div class="field"><label>Deskripsi</label><input name="deskripsi" class="input" required placeholder="Misal: Pembelian Susu Fresh Milk 10L" /></div>
             <div class="grid-2">
-              <div class="field"><label>Nominal (Rp)</label><input name="nominal" type="number" class="input mono" required /></div>
+              <div class="field"><label>Nominal (Rp)</label><input name="nominal" type="number" min="1" class="input mono" required /></div>
               <div class="field"><label>Metode</label><select name="metode" class="select"><option>Tunai</option><option>Transfer</option><option>QRIS</option></select></div>
             </div>
             <div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-modal>Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div>
@@ -2431,7 +2815,7 @@
         document.getElementById('exp-form').onsubmit = (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
-          const exp = { id: 'EXP-' + Date.now(), tanggal: fd.get('tanggal'), kategori: fd.get('kategori'), deskripsi: fd.get('deskripsi'), nominal: Number(fd.get('nominal')), metode: fd.get('metode'), dicatat_oleh: state.user?.nama || 'Owner', catatan: '' };
+          const exp = { id: 'EXP-' + Date.now(), tanggal: fd.get('tanggal'), kategori: fd.get('kategori'), deskripsi: fd.get('deskripsi').trim(), nominal: Math.max(0, Number(fd.get('nominal'))), metode: fd.get('metode'), dicatat_oleh: state.user?.nama || 'Owner', catatan: '' };
           state.db.expenses.push(exp);
           API.saveLocal(state.db);
           API.sendAction('saveExpense', exp);
@@ -2450,17 +2834,31 @@
         };
       });
 
+      document.querySelectorAll('[data-print-shift]').forEach((b) => {
+        b.onclick = async () => {
+          const shf = state.db.shifts.find((s) => s.id === b.dataset.printShift);
+          if (!shf) return;
+          if (!state.btConnected) { openBluetoothModal(); return; }
+          try {
+            await Printer.printShiftSummary(shf, state.db.settings);
+            toast('Struk Tutup Shift dicetak di Printer Bluetooth!', 'success');
+          } catch (err) {
+            toast('Gagal cetak shift: ' + err.message, 'error');
+          }
+        };
+      });
+
       document.getElementById('btn-open-shift')?.addEventListener('click', () => {
         openModal(`
-          <div class="modal-head"><div class="modal-title">Buka Shift Kasir</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
+          <div class="modal-head"><div class="modal-title">Buka Shift Kasir</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
           <form id="shift-open-form">
-            <div class="field"><label>Modal Awal Laci Tunai (Rp)</label><input name="modal" type="number" class="input mono" value="300000" required /></div>
+            <div class="field"><label>Modal Awal Laci Tunai (Rp)</label><input name="modal" type="number" min="0" class="input mono" value="300000" required /></div>
             <div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-modal>Batal</button><button type="submit" class="btn btn-primary">Buka Shift</button></div>
           </form>
         `);
         document.getElementById('shift-open-form').onsubmit = (e) => {
           e.preventDefault();
-          const modal = Number(new FormData(e.target).get('modal'));
+          const modal = Math.max(0, Number(new FormData(e.target).get('modal')));
           const shf = { id: 'SHF-' + Date.now(), kasir: state.user?.nama || 'Kasir', buka_waktu: new Date().toLocaleString('id-ID'), tutup_waktu: '', modal_awal: modal, total_tunai: 0, total_non_tunai: 0, kas_aktual: 0, selisih: 0, status: 'Buka', catatan: '' };
           state.db.shifts.push(shf);
           API.saveLocal(state.db);
@@ -2479,7 +2877,7 @@
         const expected = Number(shf.modal_awal) + tunai;
 
         openModal(`
-          <div class="modal-head"><div class="modal-title">Tutup Shift & Rekonsiliasi</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
+          <div class="modal-head"><div class="modal-title">Tutup Shift & Rekonsiliasi</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
           <div class="card" style="background:var(--bg-elevated);margin-bottom:14px;font-size:13px">
             <div class="sum-row"><span>Modal Awal</span><span class="mono">${fmtRp(shf.modal_awal)}</span></div>
             <div class="sum-row"><span>Penjualan Tunai</span><span class="mono">${fmtRp(tunai)}</span></div>
@@ -2487,7 +2885,7 @@
             <div class="sum-row total"><span>Kas Seharusnya di Laci</span><span class="mono text-gold">${fmtRp(expected)}</span></div>
           </div>
           <form id="shift-close-form">
-            <div class="field"><label>Uang Fisik Aktual di Laci (Rp)</label><input name="aktual" type="number" class="input mono" value="${expected}" required /></div>
+            <div class="field"><label>Uang Fisik Aktual di Laci (Rp)</label><input name="aktual" type="number" min="0" class="input mono" value="${expected}" required /></div>
             <div class="field"><label>Catatan Shift</label><input name="catatan" class="input" placeholder="Opsional..." /></div>
             <div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-modal>Batal</button><button type="submit" class="btn btn-danger">Tutup Shift</button></div>
           </form>
@@ -2495,14 +2893,14 @@
         document.getElementById('shift-close-form').onsubmit = (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
-          const aktual = Number(fd.get('aktual'));
+          const aktual = Math.max(0, Number(fd.get('aktual')));
           shf.tutup_waktu = new Date().toLocaleString('id-ID');
           shf.total_tunai = tunai;
           shf.total_non_tunai = nonTunai;
           shf.kas_aktual = aktual;
           shf.selisih = aktual - expected;
           shf.status = 'Tutup';
-          shf.catatan = fd.get('catatan') || '';
+          shf.catatan = (fd.get('catatan') || '').trim();
           API.saveLocal(state.db);
           API.sendAction('saveShift', shf);
           closeModal(); toast('Shift kasir berhasil ditutup!', 'success'); render();
@@ -2514,7 +2912,7 @@
     if (state.route === 'members') {
       document.getElementById('btn-add-member')?.addEventListener('click', () => {
         openModal(`
-          <div class="modal-head"><div class="modal-title">Tambah Member Loyal</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
+          <div class="modal-head"><div class="modal-title">Tambah Member Loyal</div><button type="button" class="modal-close-btn" data-close-modal aria-label="Tutup">✕</button></div>
           <form id="member-form">
             <div class="field"><label>Nama Lengkap</label><input name="nama" class="input" required /></div>
             <div class="grid-2">
@@ -2527,7 +2925,7 @@
         document.getElementById('member-form').onsubmit = (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
-          const mbr = { id: 'MBR-' + Date.now(), nama: fd.get('nama'), telepon: fd.get('telepon'), email: fd.get('email') || '', poin: 0, total_belanja: 0, kunjungan: 0, tier: 'Bronze' };
+          const mbr = { id: 'MBR-' + Date.now(), nama: fd.get('nama').trim(), telepon: fd.get('telepon').trim(), email: (fd.get('email') || '').trim(), poin: 0, total_belanja: 0, kunjungan: 0, tier: 'Bronze' };
           state.db.members.push(mbr);
           API.saveLocal(state.db);
           API.sendAction('saveMember', mbr);
@@ -2558,8 +2956,9 @@
           address: fd.get('address').trim(),
           phone: fd.get('phone').trim(),
           instagram: fd.get('instagram').trim(),
-          tax_percent: Number(fd.get('tax_percent')) || 0,
-          service_percent: Number(fd.get('service_percent')) || 0,
+          tax_percent: Math.max(0, Math.min(100, Number(fd.get('tax_percent')) || 0)),
+          service_percent: Math.max(0, Math.min(100, Number(fd.get('service_percent')) || 0)),
+          paper_size: fd.get('paper_size') || '58mm',
           receipt_footer: fd.get('receipt_footer').trim()
         };
         state.db.settings = updated;
@@ -2572,53 +2971,55 @@
       document.getElementById('btn-set-gas-modal')?.addEventListener('click', openGasSetupModal);
       document.getElementById('btn-sync-now')?.addEventListener('click', () => syncCloud(false));
       document.getElementById('btn-generate-sheets')?.addEventListener('click', async () => {
-        toast('Meng-generate sheet & header otomatis di Google Sheets...', 'info');
+        toast('Meng-generate sheet & header otomatis...', 'info');
         try {
           const res = await API.initSheets();
-          toast(`Sukses! ${res.sheets?.length || 9} sheet & header terverifikasi di Spreadsheet.`, 'success');
+          toast(`Sukses! ${res.sheets?.length || 10} sheet & header terverifikasi di Spreadsheet.`, 'success');
           await syncCloud(true);
         } catch (err) {
           toast('Gagal generate sheet: ' + err.message, 'error');
         }
       });
+
+      document.getElementById('btn-open-bt-settings')?.addEventListener('click', openBluetoothModal);
       document.getElementById('btn-check-update-settings')?.addEventListener('click', manualCheckUpdate);
       document.getElementById('btn-install-pc-settings')?.addEventListener('click', () => handleInstallDevice('PC'));
       document.getElementById('btn-install-hp-settings')?.addEventListener('click', () => handleInstallDevice('HP'));
 
-      document.getElementById('btn-add-user')?.addEventListener('click', () => {
-        openModal(`
-          <div class="modal-head"><div class="modal-title">Tambah Akun Staff</div><button class="btn btn-ghost btn-icon" data-close-modal>✕</button></div>
-          <form id="user-form">
-            <div class="grid-2">
-              <div class="field"><label>Nama Lengkap</label><input name="nama" class="input" required /></div>
-              <div class="field"><label>Role</label><select name="role" class="select"><option>Kasir</option><option>Barista</option><option>Owner</option></select></div>
-            </div>
-            <div class="grid-3">
-              <div class="field"><label>Username</label><input name="username" class="input" required /></div>
-              <div class="field"><label>Password</label><input name="password" class="input" required /></div>
-              <div class="field"><label>PIN 4 Digit</label><input name="pin" maxlength="4" class="input mono" required placeholder="4444" /></div>
-            </div>
-            <div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-modal>Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div>
-          </form>
-        `);
-        document.getElementById('user-form').onsubmit = (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          const usr = { id: 'USR-' + Date.now(), nama: fd.get('nama'), role: fd.get('role'), username: fd.get('username').trim().toLowerCase(), password: fd.get('password'), pin: fd.get('pin'), aktif: true };
-          state.db.users.push(usr);
+      // Role Management
+      document.getElementById('btn-add-role')?.addEventListener('click', () => openRoleFormModal());
+      document.querySelectorAll('[data-edit-role]').forEach((b) => {
+        b.onclick = () => openRoleFormModal(b.dataset.editRole);
+      });
+      document.querySelectorAll('[data-del-role]').forEach((b) => {
+        b.onclick = () => {
+          const id = b.dataset.delRole;
+          const r = state.db.roles.find((x) => x.id === id);
+          if (!r || r.is_system) return;
+          const inUse = (state.db.users || []).some((u) => u.role === r.nama);
+          if (inUse) { toast(`Role "${r.nama}" masih dipakai oleh akun staff. Ubah role staff tersebut dulu.`, 'error'); return; }
+          if (!confirm(`Hapus role "${r.nama}"?`)) return;
+          state.db.roles = state.db.roles.filter((x) => x.id !== id);
           API.saveLocal(state.db);
-          API.sendAction('saveUser', usr);
-          closeModal(); toast('Akun staff ditambahkan!', 'success'); render();
+          API.sendAction('deleteRole', { id });
+          toast('Role dihapus.', 'info');
+          render();
         };
       });
 
+      // Staff Management
+      document.getElementById('btn-add-user')?.addEventListener('click', () => openUserFormModal());
+      document.querySelectorAll('[data-edit-user]').forEach((b) => {
+        b.onclick = () => openUserFormModal(b.dataset.editUser);
+      });
       document.querySelectorAll('[data-del-user]').forEach((b) => {
         b.onclick = () => {
-          if (!confirm('Hapus staff ini?')) return;
+          if (!confirm('Hapus akun staff ini?')) return;
           const id = b.dataset.delUser;
           state.db.users = state.db.users.filter((u) => u.id !== id);
           API.saveLocal(state.db);
           API.sendAction('deleteUser', { id });
+          toast('Akun staff dihapus.', 'info');
           render();
         };
       });
@@ -2626,12 +3027,19 @@
   }
 
   function downloadCSV(filename, rows) {
-    const csv = rows.map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const sanitizeCell = (val) => {
+      let s = String(val ?? '');
+      // Cegah CSV Formula Injection
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const csv = rows.map((r) => r.map(sanitizeCell).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
   // ==========================================================================
@@ -2646,6 +3054,9 @@
 
   async function bootstrap() {
     applyTheme();
+    if (state.user && !hasPerm(state.route)) {
+      state.route = getFirstAllowedRoute();
+    }
     render();
     await initServiceWorkerAndUpdater();
     if (state.user && API.isConnected()) {

@@ -27,6 +27,7 @@ window.CafeAPI = (() => {
 
     return {
       settings: { ...window.CAFE_CONFIG.DEFAULT_SETTINGS },
+      roles: JSON.parse(JSON.stringify(window.CAFE_CONFIG.DEFAULT_ROLES)),
       users: JSON.parse(JSON.stringify(window.CAFE_CONFIG.DEFAULT_USERS)),
       menu: JSON.parse(JSON.stringify(window.CAFE_CONFIG.DEFAULT_MENU)),
       tables: JSON.parse(JSON.stringify(window.CAFE_CONFIG.DEFAULT_TABLES)),
@@ -47,7 +48,7 @@ window.CafeAPI = (() => {
           ],
           subtotal: 98000, diskon: 0, pajak: 9800, service_charge: 0, total: 107800,
           metode_bayar: 'QRIS', bayar: 107800, kembalian: 0,
-          status_bayar: 'Lunas', status_dapur: 'Diproses', catatan: 'Antar ke Meja 02'
+          status_bayar: 'Lunas', status_dapur: 'Selesai', catatan: ''
         },
         {
           id: 'ORD-DEMO-2',
@@ -64,7 +65,7 @@ window.CafeAPI = (() => {
           ],
           subtotal: 71000, diskon: 0, pajak: 7100, service_charge: 0, total: 78100,
           metode_bayar: 'Tunai', bayar: 100000, kembalian: 21900,
-          status_bayar: 'Lunas', status_dapur: 'Menunggu', catatan: ''
+          status_bayar: 'Lunas', status_dapur: 'Selesai', catatan: ''
         },
         {
           id: 'ORD-DEMO-3',
@@ -119,7 +120,13 @@ window.CafeAPI = (() => {
         return fresh;
       }
       const parsed = JSON.parse(raw);
-      return { ...getDefaultDB(), ...parsed };
+      const defaults = getDefaultDB();
+      return {
+        ...defaults,
+        ...parsed,
+        settings: { ...defaults.settings, ...(parsed.settings || {}) },
+        roles: Array.isArray(parsed.roles) && parsed.roles.length ? parsed.roles : defaults.roles
+      };
     } catch (e) {
       const fresh = getDefaultDB();
       saveLocal(fresh);
@@ -154,13 +161,15 @@ window.CafeAPI = (() => {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const json = await res.json();
-    if (json && json.ok === false) throw new Error(json.error || 'Terjadi kesalahan di Google Apps Script.');
+    if (json && json.ok === false) throw new Error(json.error || 'Terjadi kesalahan di server.');
     return json;
   }
 
   async function testConnection(customUrl) {
     const url = (customUrl || getGasUrl()).trim();
-    if (!url) throw new Error('Masukkan URL Web App Apps Script (/exec).');
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/i.test(url)) {
+      throw new Error('Format URL harus berawalan https://script.google.com/macros/s/... dan berakhiran /exec');
+    }
     const res = await fetch(url, {
       method: 'POST',
       mode: 'cors',
@@ -203,6 +212,7 @@ window.CafeAPI = (() => {
       const merged = {
         ...current,
         settings: { ...window.CAFE_CONFIG.DEFAULT_SETTINGS, ...(res.data.settings || {}) },
+        roles: res.data.roles?.length ? res.data.roles : current.roles,
         users: res.data.users?.length ? res.data.users : current.users,
         menu: res.data.menu?.length ? res.data.menu : current.menu,
         tables: res.data.tables?.length ? res.data.tables : current.tables,
@@ -212,9 +222,9 @@ window.CafeAPI = (() => {
         members: Array.isArray(res.data.members) ? res.data.members : current.members,
         lastSync: new Date().toISOString()
       };
-      // Normalisasi numeric settings
       merged.settings.tax_percent = Number(merged.settings.tax_percent ?? 10);
       merged.settings.service_percent = Number(merged.settings.service_percent ?? 0);
+      merged.settings.auto_print_bt = merged.settings.auto_print_bt === true || merged.settings.auto_print_bt === 'true';
       saveLocal(merged);
       return { ok: true, db: merged };
     }

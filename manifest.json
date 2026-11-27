@@ -1,7 +1,7 @@
 {
-  "name": "CAFE CL — Artisanal Coffee & POS System",
+  "name": "CAFE CL — Artisanal Coffee & Cashier POS",
   "short_name": "CAFE CL",
-  "description": "Aplikasi PWA Kasir, Barista KDS, Manajemen Meja & Keuangan khusus Cafe dengan sinkronisasi Google Sheets otomatis.",
+  "description": "Aplikasi PWA Kasir POS, Manajemen Meja, Menu & Keuangan khusus Cafe dengan printer thermal Bluetooth dan sinkronisasi Google Sheets.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -39,14 +39,14 @@
   "shortcuts": [
     {
       "name": "Buka Kasir POS",
-      "short_name": "POS Kasir",
+      "short_name": "Kasir POS",
       "url": "./index.html#pos",
       "icons": [{ "src": "./assets/icon-192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Layar Barista (KDS)",
-      "short_name": "Barista",
-      "url": "./index.html#kds",
+      "name": "Denah Meja Cafe",
+      "short_name": "Meja Cafe",
+      "url": "./index.html#tables",
       "icons": [{ "src": "./assets/icon-192.png", "sizes": "192x192" }]
     }
   ]

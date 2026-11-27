@@ -1,24 +1,57 @@
-// CAFE CL — Konfigurasi Aplikasi & Integrasi Google Sheets / Apps Script
+// CAFE CL — Konfigurasi Aplikasi (Fokus Kasir & Keamanan)
 window.CAFE_CONFIG = {
   APP_NAME: 'CAFE CL',
-  APP_TAGLINE: 'Artisanal Coffee & Roastery POS',
-  APP_VERSION: '1.0.0',
-  APP_BUILD: '20261127-1040',
+  APP_TAGLINE: 'Artisanal Coffee & Cashier POS',
+  APP_VERSION: '1.0.1',
+  APP_BUILD: '20261127-1126',
 
-  // ID Google Spreadsheet & Apps Script milik Anda
+  // ID Google Spreadsheet terikat (tanpa mengekspos link editor Apps Script demi keamanan)
   SPREADSHEET_ID: '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ',
-  SPREADSHEET_URL: 'https://docs.google.com/spreadsheets/d/1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ/edit?usp=sharing',
-  APPS_SCRIPT_ID: '1iTO7Qzup1t6NC9avQDFJfnc5sW11SpX1MB2LinQcAuhXFD3-u3rqYceT',
-  APPS_SCRIPT_URL: 'https://script.google.com/u/0/home/projects/1iTO7Qzup1t6NC9avQDFJfnc5sW11SpX1MB2LinQcAuhXFD3-u3rqYceT/edit',
 
-  // Tempel URL Web App hasil Deploy Google Apps Script Anda di sini (berakhiran /exec)
-  // Bisa juga diisi langsung dari tombol "Hubungkan GAS" di layar Login atau Pengaturan!
+  // URL Web App Google Apps Script (/exec) — dapat diatur aman oleh Owner di menu Pengaturan
   GAS_WEBAPP_URL: '',
 
   // Interval pengecekan update otomatis di latar belakang (milidetik)
   UPDATE_CHECK_INTERVAL_MS: 60000,
 
-  // Data awal default (otomatis terpakai jika belum terhubung ke GAS / mode offline)
+  // Daftar izin akses (RBAC) yang tersedia untuk Role Management
+  ALL_PERMISSIONS: [
+    { key: 'dashboard', label: 'Dashboard Eksekutif' },
+    { key: 'pos', label: 'Kasir POS' },
+    { key: 'tables', label: 'Denah Meja Cafe' },
+    { key: 'history', label: 'Riwayat Transaksi' },
+    { key: 'menu', label: 'Kelola Menu & Stok' },
+    { key: 'finance', label: 'Keuangan & Shift Kasir' },
+    { key: 'members', label: 'Member & Loyalitas' },
+    { key: 'void_order', label: 'Batalkan (Void) Transaksi' },
+    { key: 'settings', label: 'Pengaturan Sistem & Integrasi' },
+    { key: 'manage_staff', label: 'Kelola Staff & Role' }
+  ],
+
+  DEFAULT_ROLES: [
+    {
+      id: 'ROL-OWNER',
+      nama: 'Owner',
+      deskripsi: 'Akses penuh ke seluruh fitur kasir, laporan, staff, role & pengaturan sistem.',
+      akses: ['dashboard', 'pos', 'tables', 'history', 'menu', 'finance', 'members', 'void_order', 'settings', 'manage_staff'],
+      is_system: true
+    },
+    {
+      id: 'ROL-MANAGER',
+      nama: 'Supervisor',
+      deskripsi: 'Akses operasional, kelola menu, keuangan, shift & void transaksi.',
+      akses: ['dashboard', 'pos', 'tables', 'history', 'menu', 'finance', 'members', 'void_order'],
+      is_system: false
+    },
+    {
+      id: 'ROL-KASIR',
+      nama: 'Kasir',
+      deskripsi: 'Fokus layanan kasir POS, meja cafe, riwayat struk, member & shift kasir.',
+      akses: ['dashboard', 'pos', 'tables', 'history', 'members', 'finance'],
+      is_system: true
+    }
+  ],
+
   DEFAULT_SETTINGS: {
     cafe_name: 'CAFE CL',
     tagline: 'Artisanal Coffee & Roastery',
@@ -29,13 +62,13 @@ window.CAFE_CONFIG = {
     service_percent: 0,
     receipt_footer: 'Terima kasih telah menikmati kopi di CAFE CL. Sampai jumpa kembali!',
     paper_size: '58mm',
+    auto_print_bt: false,
     currency: 'Rp'
   },
 
   DEFAULT_USERS: [
     { id: 'USR-001', username: 'owner', password: 'owner123', nama: 'Owner CAFE CL', role: 'Owner', pin: '1111', aktif: true },
-    { id: 'USR-002', username: 'kasir', password: 'kasir123', nama: 'Kasir Utama', role: 'Kasir', pin: '2222', aktif: true },
-    { id: 'USR-003', username: 'barista', password: 'barista123', nama: 'Head Barista', role: 'Barista', pin: '3333', aktif: true }
+    { id: 'USR-002', username: 'kasir', password: 'kasir123', nama: 'Kasir Utama', role: 'Kasir', pin: '2222', aktif: true }
   ],
 
   DEFAULT_TABLES: [
@@ -84,7 +117,7 @@ window.CAFE_CONFIG = {
     },
     {
       id: 'MNU-007', kode: 'ESP-04', nama: 'Manual Brew V60 Pour Over', kategori: 'Espresso',
-      harga: 32000, hpp: 11000, stok: 40, deskripsi: 'Seduhan manual single origin pilihan barista dengan notes floral & citrus.',
+      harga: 32000, hpp: 11000, stok: 40, deskripsi: 'Seduhan manual single origin pilihan dengan notes floral & citrus.',
       foto_url: '', varian: 'Hot,Japanese Iced', tersedia: true, favorit: false
     },
     {

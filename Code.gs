@@ -1,27 +1,24 @@
 /**
  * ============================================================================
- * CAFE CL — Google Apps Script Backend (Code.gs)
+ * CAFE CL — Google Apps Script Backend (Code.gs) v1.1.0
  * ============================================================================
  * Spreadsheet ID : 1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ
- * Apps Script ID : 1iTO7Qzup1t6NC9avQDFJfnc5sW11SpX1MB2LinQcAuhXFD3-u3rqYceT
  *
- * CARA DEPLOY CEPAT:
- * 1. Tempel seluruh kode ini ke Code.gs di project Apps Script Anda.
- * 2. (Opsional) Pilih fungsi `setupDatabase` lalu klik Run untuk langsung
- *    meng-generate seluruh sheet + header + data awal cafe secara otomatis!
- *    (Atau cukup deploy — sheet & header otomatis terbuat pada request pertama!)
- * 3. Klik Deploy -> New deployment -> Web app:
- *    - Execute as: Me
- *    - Who has access: Anyone
- * 4. Salin URL Web App (/exec) lalu tempel di aplikasi CAFE CL (tombol Hubungkan GAS).
+ * Fitur:
+ * - Auto-generate 10 sheet + header bergaya & data awal (termasuk sheet Roles)
+ * - Fokus Kasir POS Cafe (Pesanan, Detail_Pesanan, Meja, Menu, Keuangan, Shift, Member)
+ * - Void pesanan otomatis mengembalikan stok menu & mengosongkan meja
+ * - Upsert & delete aman dengan LockService
  * ============================================================================
  */
 
 const SPREADSHEET_ID = '1fmNy_guFg-obp4JdVrNsQsCbbXPGp8IK7nPetVlCmTQ';
 const TIMEZONE = 'Asia/Jakarta';
 
-// Skema seluruh sheet dan header otomatis khusus sistem Cafe
 const SCHEMA = {
+  Roles: [
+    'id', 'nama', 'deskripsi', 'akses_json', 'is_system', 'created_at'
+  ],
   Users: [
     'id', 'username', 'password', 'nama', 'role', 'pin', 'aktif', 'created_at'
   ],
@@ -59,45 +56,13 @@ const SCHEMA = {
   ]
 };
 
-// ============================================================================
-// UTILITY HELPERS
-// ============================================================================
-
-function getSS() {
-  return SpreadsheetApp.openById(SPREADSHEET_ID);
-}
-
-function nowISO() {
-  return Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss");
-}
-
-function todayStr() {
-  return Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
-}
-
-function timeStr() {
-  return Utilities.formatDate(new Date(), TIMEZONE, 'HH:mm:ss');
-}
-
-function jsonOut(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function parseBool(val) {
-  if (val === true || val === 'TRUE' || val === 'true' || val === 1 || val === '1') return true;
-  return false;
-}
-
-function toNum(val) {
-  const n = Number(val);
-  return isNaN(n) ? 0 : n;
-}
-
-// ============================================================================
-// AUTO-GENERATE SHEETS, STYLED HEADERS & INITIAL SEED DATA
-// ============================================================================
+function getSS() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
+function nowISO() { return Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss"); }
+function todayStr() { return Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd'); }
+function timeStr() { return Utilities.formatDate(new Date(), TIMEZONE, 'HH:mm:ss'); }
+function jsonOut(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
+function parseBool(v) { return v === true || v === 'TRUE' || v === 'true' || v === 1 || v === '1'; }
+function toNum(v) { const n = Number(v); return isNaN(n) ? 0 : n; }
 
 function setupDatabase() {
   const result = ensureDatabaseSetup(true);
@@ -123,7 +88,6 @@ function ensureDatabaseSetup(seedIfEmpty) {
       createdSheets.push(sheetName);
     }
 
-    // Pastikan baris header sesuai skema
     const lastCol = Math.max(sheet.getLastColumn(), headers.length);
     const existingHeader = sheet.getLastRow() >= 1
       ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((h) => String(h).trim())
@@ -131,16 +95,12 @@ function ensureDatabaseSetup(seedIfEmpty) {
 
     const headerMismatch = headers.some((h, idx) => existingHeader[idx] !== h);
     if (isNew || sheet.getLastRow() === 0 || headerMismatch) {
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(headers);
-      } else {
-        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      }
+      if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+      else sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       styleHeaderRow(sheet, headers.length);
       if (!isNew) repairedHeaders.push(sheetName);
     }
 
-    // Seed data awal otomatis jika sheet baru dibuat atau masih kosong
     if (seedIfEmpty && sheet.getLastRow() <= 1) {
       const seedRows = getSeedRows(sheetName, now);
       if (seedRows && seedRows.length > 0) {
@@ -150,7 +110,6 @@ function ensureDatabaseSetup(seedIfEmpty) {
     }
   });
 
-  // Hapus sheet bawaan kosong "Sheet1" jika sudah ada sheet Cafe
   const defaultSheet = ss.getSheetByName('Sheet1');
   if (defaultSheet && ss.getSheets().length > 1 && defaultSheet.getLastRow() === 0) {
     try { ss.deleteSheet(defaultSheet); } catch (e) {}
@@ -161,9 +120,9 @@ function ensureDatabaseSetup(seedIfEmpty) {
     spreadsheetId: SPREADSHEET_ID,
     spreadsheetName: ss.getName(),
     sheets: Object.keys(SCHEMA),
-    createdSheets: createdSheets,
-    repairedHeaders: repairedHeaders,
-    seededSheets: seededSheets,
+    createdSheets,
+    repairedHeaders,
+    seededSheets,
     timestamp: now
   };
 }
@@ -180,17 +139,21 @@ function styleHeaderRow(sheet, colCount) {
     .setVerticalAlignment('middle');
   sheet.setFrozenRows(1);
   sheet.setRowHeight(1, 32);
-  try {
-    sheet.autoResizeColumns(1, colCount);
-  } catch (e) {}
+  try { sheet.autoResizeColumns(1, colCount); } catch (e) {}
 }
 
 function getSeedRows(sheetName, now) {
+  if (sheetName === 'Roles') {
+    return [
+      ['ROL-OWNER', 'Owner', 'Akses penuh ke seluruh fitur kasir, laporan, staff, role & pengaturan sistem.', JSON.stringify(['dashboard', 'pos', 'tables', 'history', 'menu', 'finance', 'members', 'void_order', 'settings', 'manage_staff']), true, now],
+      ['ROL-MANAGER', 'Supervisor', 'Akses operasional, kelola menu, keuangan, shift & void transaksi.', JSON.stringify(['dashboard', 'pos', 'tables', 'history', 'menu', 'finance', 'members', 'void_order']), false, now],
+      ['ROL-KASIR', 'Kasir', 'Fokus layanan kasir POS, meja cafe, riwayat struk, member & shift kasir.', JSON.stringify(['dashboard', 'pos', 'tables', 'history', 'members', 'finance']), true, now]
+    ];
+  }
   if (sheetName === 'Users') {
     return [
       ['USR-001', 'owner', 'owner123', 'Owner CAFE CL', 'Owner', '1111', true, now],
-      ['USR-002', 'kasir', 'kasir123', 'Kasir Utama', 'Kasir', '2222', true, now],
-      ['USR-003', 'barista', 'barista123', 'Head Barista', 'Barista', '3333', true, now]
+      ['USR-002', 'kasir', 'kasir123', 'Kasir Utama', 'Kasir', '2222', true, now]
     ];
   }
   if (sheetName === 'Meja') {
@@ -215,7 +178,7 @@ function getSeedRows(sheetName, now) {
       ['MNU-004', 'ESP-01', 'Double Shot Americano', 'Espresso', 22000, 7000, 120, '100% Arabica Gayo & Bali Kintamani roasted medium-dark.', '', 'Iced,Hot|No Sugar,Less Sugar,Normal Sugar', true, false, now],
       ['MNU-005', 'ESP-02', 'Artisan Cappuccino', 'Espresso', 28000, 9800, 90, 'Espresso seimbang dengan microfoam tebal dan taburan cokelat halus.', '', 'Hot,Iced|No Sugar,Less Sugar|Fresh Milk,Oat Milk (+8000)', true, true, now],
       ['MNU-006', 'ESP-03', 'Caffe Latte', 'Espresso', 28000, 9800, 90, 'Espresso single origin dengan steamed milk lembut.', '', 'Hot,Iced|No Sugar,Less Sugar,Normal Sugar|Fresh Milk,Oat Milk (+8000)', true, false, now],
-      ['MNU-007', 'ESP-04', 'Manual Brew V60 Pour Over', 'Espresso', 32000, 11000, 40, 'Seduhan manual single origin pilihan barista dengan notes floral & citrus.', '', 'Hot,Japanese Iced', true, false, now],
+      ['MNU-007', 'ESP-04', 'Manual Brew V60 Pour Over', 'Espresso', 32000, 11000, 40, 'Seduhan manual single origin pilihan dengan notes floral & citrus.', '', 'Hot,Japanese Iced', true, false, now],
       ['MNU-008', 'NON-01', 'Ceremonial Uji Matcha Latte', 'Non-Coffee', 33000, 13500, 55, 'Matcha Jepang grade ceremonial dengan susu segar dingin/hangat.', '', 'Iced,Hot|Normal Sugar,Less Sugar|Fresh Milk,Oat Milk (+8000)', true, true, now],
       ['MNU-009', 'NON-02', 'Belgian Dark Chocolate', 'Non-Coffee', 30000, 11500, 60, 'Cokelat hitam Belgia 70% kaya rasa dengan tekstur pekat lembut.', '', 'Iced,Hot|Normal Sugar,Less Sugar', true, false, now],
       ['MNU-010', 'NON-03', 'Red Velvet Cream Cheese', 'Non-Coffee', 31000, 11800, 45, 'Minuman red velvet lembut dengan topping cheese foam gurih.', '', 'Iced,Hot|Normal Sugar,Less Sugar', true, false, now],
@@ -246,15 +209,12 @@ function getSeedRows(sheetName, now) {
       ['service_percent', '0', now],
       ['receipt_footer', 'Terima kasih telah menikmati kopi di CAFE CL. Sampai jumpa kembali!', now],
       ['paper_size', '58mm', now],
+      ['auto_print_bt', 'false', now],
       ['currency', 'Rp', now]
     ];
   }
   return [];
 }
-
-// ============================================================================
-// GENERIC SHEET DATA ACCESSORS
-// ============================================================================
 
 function readSheetObjects(sheetName) {
   const ss = getSS();
@@ -269,9 +229,7 @@ function readSheetObjects(sheetName) {
     const obj = {};
     headers.forEach((h, idx) => {
       let val = row[idx];
-      if (val instanceof Date) {
-        val = Utilities.formatDate(val, TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss");
-      }
+      if (val instanceof Date) val = Utilities.formatDate(val, TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss");
       obj[h] = val;
     });
     rows.push(obj);
@@ -314,29 +272,15 @@ function deleteRowByKey(sheetName, keyCol, keyVal) {
   return false;
 }
 
-// ============================================================================
-// HTTP ENTRYPOINTS (doGet & doPost)
-// ============================================================================
-
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'ping';
-
-    if (action === 'init' || action === 'initSheets') {
-      return jsonOut(ensureDatabaseSetup(true));
-    }
-
-    // Otomatis pastikan sheet & header tersedia saat akses pertama
+    if (action === 'init' || action === 'initSheets') return jsonOut(ensureDatabaseSetup(true));
     ensureDatabaseSetup(true);
-
-    if (action === 'sync' || action === 'getAll') {
-      return jsonOut(handleSyncAll());
-    }
-
+    if (action === 'sync' || action === 'getAll') return jsonOut(handleSyncAll());
     return jsonOut({
       ok: true,
-      app: 'CAFE CL Backend',
-      spreadsheetId: SPREADSHEET_ID,
+      app: 'CAFE CL Cashier Backend',
       status: 'READY',
       serverTime: nowISO(),
       sheets: Object.keys(SCHEMA)
@@ -358,65 +302,28 @@ function doPost(e) {
     const data = body.data || {};
 
     switch (action) {
-      case 'ping':
-        return jsonOut({ ok: true, status: 'READY', serverTime: nowISO(), spreadsheetId: SPREADSHEET_ID });
-
-      case 'initSheets':
-        return jsonOut(ensureDatabaseSetup(true));
-
-      case 'syncAll':
-        return jsonOut(handleSyncAll());
-
-      case 'login':
-        return jsonOut(handleLogin(data));
-
-      case 'saveOrder':
-        return jsonOut(handleSaveOrder(data));
-
-      case 'updateOrderStatus':
-        return jsonOut(handleUpdateOrderStatus(data));
-
-      case 'voidOrder':
-        return jsonOut(handleVoidOrder(data));
-
-      case 'saveMenu':
-        return jsonOut(handleSaveMenu(data));
-
-      case 'deleteMenu':
-        return jsonOut({ ok: deleteRowByKey('Menu', 'id', data.id) });
-
-      case 'saveTable':
-        return jsonOut(handleSaveTable(data));
-
-      case 'deleteTable':
-        return jsonOut({ ok: deleteRowByKey('Meja', 'id', data.id) });
-
-      case 'saveExpense':
-        return jsonOut(handleSaveExpense(data));
-
-      case 'deleteExpense':
-        return jsonOut({ ok: deleteRowByKey('Pengeluaran', 'id', data.id) });
-
-      case 'saveShift':
-        return jsonOut(handleSaveShift(data));
-
-      case 'saveMember':
-        return jsonOut(handleSaveMember(data));
-
-      case 'deleteMember':
-        return jsonOut({ ok: deleteRowByKey('Member', 'id', data.id) });
-
-      case 'saveUser':
-        return jsonOut(handleSaveUser(data));
-
-      case 'deleteUser':
-        return jsonOut({ ok: deleteRowByKey('Users', 'id', data.id) });
-
-      case 'saveSettings':
-        return jsonOut(handleSaveSettings(data));
-
-      default:
-        return jsonOut({ ok: false, error: 'Action tidak dikenali: ' + action });
+      case 'ping': return jsonOut({ ok: true, status: 'READY', serverTime: nowISO() });
+      case 'initSheets': return jsonOut(ensureDatabaseSetup(true));
+      case 'syncAll': return jsonOut(handleSyncAll());
+      case 'login': return jsonOut(handleLogin(data));
+      case 'saveOrder': return jsonOut(handleSaveOrder(data));
+      case 'updateOrderStatus': return jsonOut(handleUpdateOrderStatus(data));
+      case 'voidOrder': return jsonOut(handleVoidOrder(data));
+      case 'saveMenu': return jsonOut(handleSaveMenu(data));
+      case 'deleteMenu': return jsonOut({ ok: deleteRowByKey('Menu', 'id', data.id) });
+      case 'saveTable': return jsonOut(handleSaveTable(data));
+      case 'deleteTable': return jsonOut({ ok: deleteRowByKey('Meja', 'id', data.id) });
+      case 'saveExpense': return jsonOut(handleSaveExpense(data));
+      case 'deleteExpense': return jsonOut({ ok: deleteRowByKey('Pengeluaran', 'id', data.id) });
+      case 'saveShift': return jsonOut(handleSaveShift(data));
+      case 'saveMember': return jsonOut(handleSaveMember(data));
+      case 'deleteMember': return jsonOut({ ok: deleteRowByKey('Member', 'id', data.id) });
+      case 'saveUser': return jsonOut(handleSaveUser(data));
+      case 'deleteUser': return jsonOut({ ok: deleteRowByKey('Users', 'id', data.id) });
+      case 'saveRole': return jsonOut(handleSaveRole(data));
+      case 'deleteRole': return jsonOut({ ok: deleteRowByKey('Roles', 'id', data.id) });
+      case 'saveSettings': return jsonOut(handleSaveSettings(data));
+      default: return jsonOut({ ok: false, error: 'Action tidak dikenali: ' + action });
     }
   } catch (err) {
     return jsonOut({ ok: false, error: err.message });
@@ -425,14 +332,22 @@ function doPost(e) {
   }
 }
 
-// ============================================================================
-// BUSINESS LOGIC HANDLERS
-// ============================================================================
-
 function handleSyncAll() {
   const settingsArr = readSheetObjects('Pengaturan');
   const settingsObj = {};
   settingsArr.forEach((r) => { settingsObj[r.key] = r.value; });
+
+  const roles = readSheetObjects('Roles').map((r) => {
+    let akses = [];
+    try { akses = JSON.parse(r.akses_json || '[]'); } catch (e) {}
+    return {
+      id: r.id,
+      nama: r.nama,
+      deskripsi: r.deskripsi || '',
+      akses: akses,
+      is_system: parseBool(r.is_system)
+    };
+  });
 
   const menu = readSheetObjects('Menu').map((m) => ({
     ...m,
@@ -443,10 +358,7 @@ function handleSyncAll() {
     favorit: parseBool(m.favorit)
   }));
 
-  const tables = readSheetObjects('Meja').map((t) => ({
-    ...t,
-    kapasitas: toNum(t.kapasitas)
-  }));
+  const tables = readSheetObjects('Meja').map((t) => ({ ...t, kapasitas: toNum(t.kapasitas) }));
 
   const orders = readSheetObjects('Pesanan').map((o) => {
     let items = [];
@@ -464,11 +376,7 @@ function handleSyncAll() {
     };
   });
 
-  const expenses = readSheetObjects('Pengeluaran').map((x) => ({
-    ...x,
-    nominal: toNum(x.nominal)
-  }));
-
+  const expenses = readSheetObjects('Pengeluaran').map((x) => ({ ...x, nominal: toNum(x.nominal) }));
   const shifts = readSheetObjects('Shift_Kasir').map((s) => ({
     ...s,
     modal_awal: toNum(s.modal_awal),
@@ -477,33 +385,18 @@ function handleSyncAll() {
     kas_aktual: toNum(s.kas_aktual),
     selisih: toNum(s.selisih)
   }));
-
   const members = readSheetObjects('Member').map((m) => ({
     ...m,
     poin: toNum(m.poin),
     total_belanja: toNum(m.total_belanja),
     kunjungan: toNum(m.kunjungan)
   }));
-
-  const users = readSheetObjects('Users').map((u) => ({
-    ...u,
-    aktif: parseBool(u.aktif)
-  }));
+  const users = readSheetObjects('Users').map((u) => ({ ...u, aktif: parseBool(u.aktif) }));
 
   return {
     ok: true,
     serverTime: nowISO(),
-    spreadsheetId: SPREADSHEET_ID,
-    data: {
-      settings: settingsObj,
-      users: users,
-      menu: menu,
-      tables: tables,
-      orders: orders,
-      expenses: expenses,
-      shifts: shifts,
-      members: members
-    }
+    data: { settings: settingsObj, roles, users, menu, tables, orders, expenses, shifts, members }
   };
 }
 
@@ -513,28 +406,31 @@ function handleLogin(data) {
   const username = String(data.username || '').trim().toLowerCase();
   const password = String(data.password || '').trim();
 
-  let found = null;
-  if (pin) {
-    found = users.find((u) => String(u.pin) === pin && parseBool(u.aktif));
-  } else {
-    found = users.find(
-      (u) => String(u.username).toLowerCase() === username && String(u.password) === password && parseBool(u.aktif)
-    );
-  }
+  const found = pin
+    ? users.find((u) => String(u.pin) === pin && parseBool(u.aktif))
+    : users.find((u) => String(u.username).toLowerCase() === username && String(u.password) === password && parseBool(u.aktif));
 
-  if (!found) {
-    return { ok: false, error: 'Username/Password atau PIN tidak sesuai, atau akun non-aktif.' };
-  }
+  if (!found) return { ok: false, error: 'Username/Password atau PIN tidak sesuai.' };
+  return { ok: true, user: { id: found.id, username: found.username, nama: found.nama, role: found.role } };
+}
 
-  return {
-    ok: true,
-    user: {
-      id: found.id,
-      username: found.username,
-      nama: found.nama,
-      role: found.role
+function adjustMenuStock(items, direction) {
+  // direction: -1 untuk kurangi stok, +1 untuk kembalikan stok (void)
+  const menuSheet = getSS().getSheetByName('Menu');
+  const menuData = menuSheet.getDataRange().getValues();
+  const idIdx = SCHEMA.Menu.indexOf('id');
+  const stokIdx = SCHEMA.Menu.indexOf('stok');
+  (items || []).forEach((it) => {
+    const targetId = String(it.menu_id || it.id || '');
+    for (let r = 1; r < menuData.length; r++) {
+      if (String(menuData[r][idIdx]) === targetId) {
+        const nextStok = Math.max(0, toNum(menuData[r][stokIdx]) + direction * toNum(it.qty || 1));
+        menuSheet.getRange(r + 1, stokIdx + 1).setValue(nextStok);
+        menuData[r][stokIdx] = nextStok;
+        break;
+      }
     }
-  };
+  });
 }
 
 function handleSaveOrder(order) {
@@ -544,7 +440,7 @@ function handleSaveOrder(order) {
   const items = Array.isArray(order.items) ? order.items : [];
 
   const record = {
-    id: id,
+    id,
     no_invoice: invoice,
     tanggal: order.tanggal || todayStr(),
     waktu: order.waktu || timeStr(),
@@ -562,14 +458,13 @@ function handleSaveOrder(order) {
     bayar: toNum(order.bayar),
     kembalian: toNum(order.kembalian),
     status_bayar: order.status_bayar || 'Lunas',
-    status_dapur: order.status_dapur || 'Menunggu',
+    status_dapur: 'Selesai',
     catatan: order.catatan || '',
     updated_at: now
   };
 
   const res = upsertRowByKey('Pesanan', 'id', record);
 
-  // Simpan detail item ke sheet Detail_Pesanan (hanya saat insert pesanan baru)
   if (res.inserted && items.length > 0) {
     const detailSheet = getSS().getSheetByName('Detail_Pesanan');
     const detailRows = items.map((it, idx) => {
@@ -578,41 +473,16 @@ function handleSaveOrder(order) {
       const hpp = toNum(it.hpp || 0);
       const sub = qty * harga;
       return [
-        id + '-' + (idx + 1),
-        invoice,
-        record.tanggal,
-        it.menu_id || it.id || '',
-        it.nama || '',
-        it.kategori || '',
-        it.varian || '',
-        it.catatan || '',
-        qty,
-        harga,
-        hpp,
-        sub,
-        sub - (qty * hpp)
+        id + '-' + (idx + 1), invoice, record.tanggal,
+        it.menu_id || it.id || '', it.nama || '', it.kategori || '',
+        it.varian || '', it.catatan || '', qty, harga, hpp, sub, sub - (qty * hpp)
       ];
     });
     detailSheet.getRange(detailSheet.getLastRow() + 1, 1, detailRows.length, SCHEMA.Detail_Pesanan.length).setValues(detailRows);
-
-    // Kurangi stok menu secara otomatis
-    const menuSheet = getSS().getSheetByName('Menu');
-    const menuData = menuSheet.getDataRange().getValues();
-    const idIdx = SCHEMA.Menu.indexOf('id');
-    const stokIdx = SCHEMA.Menu.indexOf('stok');
-    items.forEach((it) => {
-      const targetId = String(it.menu_id || it.id || '');
-      for (let r = 1; r < menuData.length; r++) {
-        if (String(menuData[r][idIdx]) === targetId) {
-          const newStok = Math.max(0, toNum(menuData[r][stokIdx]) - toNum(it.qty || 1));
-          menuSheet.getRange(r + 1, stokIdx + 1).setValue(newStok);
-          break;
-        }
-      }
-    });
+    adjustMenuStock(items, -1);
   }
 
-  // Update status Meja otomatis jika Dine-In
+  // Update status Meja otomatis
   if (record.tipe_order === 'Dine-In' && record.meja && record.meja !== '-') {
     const mejaSheet = getSS().getSheetByName('Meja');
     const mejaData = mejaSheet.getDataRange().getValues();
@@ -621,16 +491,16 @@ function handleSaveOrder(order) {
     const orderIdx = SCHEMA.Meja.indexOf('order_aktif');
     for (let r = 1; r < mejaData.length; r++) {
       if (String(mejaData[r][namaIdx]) === String(record.meja)) {
-        const nextStatus = (record.status_bayar === 'Open Bill') ? 'Terisi' : (record.status_dapur === 'Selesai' ? 'Tersedia' : 'Terisi');
-        mejaSheet.getRange(r + 1, statusIdx + 1).setValue(nextStatus);
-        mejaSheet.getRange(r + 1, orderIdx + 1).setValue(nextStatus === 'Terisi' ? invoice : '');
+        const isOpenBill = record.status_bayar === 'Open Bill';
+        mejaSheet.getRange(r + 1, statusIdx + 1).setValue(isOpenBill ? 'Terisi' : 'Tersedia');
+        mejaSheet.getRange(r + 1, orderIdx + 1).setValue(isOpenBill ? invoice : '');
         break;
       }
     }
   }
 
-  // Update poin Member otomatis jika ada member_id & status Lunas
-  if (order.member_id && record.status_bayar === 'Lunas' && res.inserted) {
+  // Update poin Member otomatis saat Lunas
+  if (order.member_id && record.status_bayar === 'Lunas') {
     const memberSheet = getSS().getSheetByName('Member');
     const mData = memberSheet.getDataRange().getValues();
     const mIdIdx = SCHEMA.Member.indexOf('id');
@@ -654,30 +524,23 @@ function handleSaveOrder(order) {
     }
   }
 
-  return { ok: true, id: id, no_invoice: invoice, order: { ...record, items: items } };
+  return { ok: true, id, no_invoice: invoice, order: { ...record, items } };
 }
 
 function handleUpdateOrderStatus(data) {
-  const ss = getSS();
-  const sheet = ss.getSheetByName('Pesanan');
+  const sheet = getSS().getSheetByName('Pesanan');
   const rows = sheet.getDataRange().getValues();
   const idIdx = SCHEMA.Pesanan.indexOf('id');
-  const dapurIdx = SCHEMA.Pesanan.indexOf('status_dapur');
   const bayarIdx = SCHEMA.Pesanan.indexOf('status_bayar');
   const mejaIdx = SCHEMA.Pesanan.indexOf('meja');
   const updIdx = SCHEMA.Pesanan.indexOf('updated_at');
 
   for (let r = 1; r < rows.length; r++) {
     if (String(rows[r][idIdx]) === String(data.id)) {
-      if (data.status_dapur) sheet.getRange(r + 1, dapurIdx + 1).setValue(data.status_dapur);
       if (data.status_bayar) sheet.getRange(r + 1, bayarIdx + 1).setValue(data.status_bayar);
       sheet.getRange(r + 1, updIdx + 1).setValue(nowISO());
-
-      // Jika selesai dan lunas, kosongkan meja otomatis
-      const finalDapur = data.status_dapur || rows[r][dapurIdx];
-      const finalBayar = data.status_bayar || rows[r][bayarIdx];
       const mejaNama = rows[r][mejaIdx];
-      if (finalDapur === 'Selesai' && finalBayar === 'Lunas' && mejaNama && mejaNama !== '-') {
+      if ((data.status_bayar === 'Lunas' || data.status_bayar === 'Dibatalkan') && mejaNama && mejaNama !== '-') {
         freeTableByName(mejaNama);
       }
       return { ok: true };
@@ -687,7 +550,29 @@ function handleUpdateOrderStatus(data) {
 }
 
 function handleVoidOrder(data) {
-  return handleUpdateOrderStatus({ id: data.id, status_bayar: 'Dibatalkan', status_dapur: 'Dibatalkan' });
+  const sheet = getSS().getSheetByName('Pesanan');
+  const rows = sheet.getDataRange().getValues();
+  const idIdx = SCHEMA.Pesanan.indexOf('id');
+  const bayarIdx = SCHEMA.Pesanan.indexOf('status_bayar');
+  const itemsIdx = SCHEMA.Pesanan.indexOf('items_json');
+  const mejaIdx = SCHEMA.Pesanan.indexOf('meja');
+  const updIdx = SCHEMA.Pesanan.indexOf('updated_at');
+
+  for (let r = 1; r < rows.length; r++) {
+    if (String(rows[r][idIdx]) === String(data.id)) {
+      if (rows[r][bayarIdx] === 'Dibatalkan') return { ok: true };
+      sheet.getRange(r + 1, bayarIdx + 1).setValue('Dibatalkan');
+      sheet.getRange(r + 1, updIdx + 1).setValue(nowISO());
+      // Kembalikan stok & bebaskan meja
+      try {
+        const items = JSON.parse(rows[r][itemsIdx] || '[]');
+        adjustMenuStock(items, +1);
+      } catch (e) {}
+      if (rows[r][mejaIdx] && rows[r][mejaIdx] !== '-') freeTableByName(rows[r][mejaIdx]);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'Pesanan tidak ditemukan' };
 }
 
 function freeTableByName(mejaNama) {
@@ -802,6 +687,19 @@ function handleSaveUser(u) {
     created_at: u.created_at || nowISO()
   };
   upsertRowByKey('Users', 'id', record);
+  return { ok: true, item: record };
+}
+
+function handleSaveRole(r) {
+  const record = {
+    id: r.id || ('ROL-' + Date.now()),
+    nama: String(r.nama || '').trim(),
+    deskripsi: r.deskripsi || '',
+    akses_json: JSON.stringify(Array.isArray(r.akses) ? r.akses : ['pos']),
+    is_system: Boolean(r.is_system),
+    created_at: r.created_at || nowISO()
+  };
+  upsertRowByKey('Roles', 'id', record);
   return { ok: true, item: record };
 }
 

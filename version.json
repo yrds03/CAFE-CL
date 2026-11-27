@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "build": "20261127-1040",
-  "releasedAt": "2026-11-27T10:40:00+07:00",
-  "notes": "Rilis perdana CAFE CL — Sistem POS, Barista KDS, Meja & Keuangan PWA dengan sinkronisasi Google Sheets dan Auto-Update."
+  "version": "1.0.1",
+  "build": "20261127-1126",
+  "releasedAt": "2026-11-27T04:26:13.325Z",
+  "notes": "Update v1.0.1: Bluetooth Thermal Printer (BT merah/hijau), Manajemen Role RBAC, fokus Kasir, fix tombol tutup modal, dan perketat keamanan"
 }
